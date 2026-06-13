@@ -261,17 +261,22 @@ final class SettingsWindowController {
             popup.menu?.items.last?.representedObject = lang.code as NSString
         }
 
-        let currentLang = SettingsManager.shared.interfaceLanguage
-        if currentLang.isEmpty {
+        selectItem(in: popup, matching: SettingsManager.shared.interfaceLanguage)
+    }
+
+    /// Выбирает в popup пункт, у которого representedObject == id (или первый при пустом id)
+    private func selectItem(in popup: NSPopUpButton, matching id: String) {
+        if id.isEmpty {
             popup.selectItem(at: 0)
-        } else {
-            for (i, item) in popup.itemArray.enumerated() {
-                if (item.representedObject as? String) == currentLang {
-                    popup.selectItem(at: i)
-                    break
-                }
+            return
+        }
+        for (i, item) in popup.itemArray.enumerated() {
+            if (item.representedObject as? String) == id {
+                popup.selectItem(at: i)
+                return
             }
         }
+        popup.selectItem(at: 0)
     }
 
     // MARK: - Layout Popup
@@ -289,17 +294,7 @@ final class SettingsWindowController {
             popup.menu?.items.last?.representedObject = id as NSString
         }
 
-        // Выбрать текущую
-        if selectedID.isEmpty {
-            popup.selectItem(at: 0)
-        } else {
-            for (i, item) in popup.itemArray.enumerated() {
-                if (item.representedObject as? String) == selectedID {
-                    popup.selectItem(at: i)
-                    break
-                }
-            }
-        }
+        selectItem(in: popup, matching: selectedID)
     }
 
     private func selectedLayoutID(from popup: NSPopUpButton) -> String {
@@ -352,7 +347,7 @@ final class SettingsWindowController {
     }
 
     @objc private func openGitHub() {
-        if let url = URL(string: "https://github.com/rashn/RuSwitcher") {
+        if let url = URL(string: SettingsManager.githubURL) {
             NSWorkspace.shared.open(url)
         }
     }

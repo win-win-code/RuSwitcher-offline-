@@ -105,6 +105,18 @@ final class SettingsManager: @unchecked Sendable {
     var donateURL: String { "https://boosty.to/ruswitcher" }
     var contactEmail: String { "xrashid@gmail.com" }
 
+    // MARK: - GitHub coordinates (единственный источник — чтобы при переименовании
+    // репозитория правка была в одном месте)
+    static let githubOwner = "rashn"
+    static let githubRepo = "RuSwitcher"
+    static var githubURL: String { "https://github.com/\(githubOwner)/\(githubRepo)" }
+    /// Team ID (Apple Developer), которым подписаны релизы. Используется для
+    /// пиннинга подписи при авто-обновлении.
+    static let developerTeamID = "9GEWCZ59HK"
+    static func releaseDMGURL(version: String) -> String {
+        "\(githubURL)/releases/download/v\(version)/\(githubRepo)-\(version).dmg"
+    }
+
     // MARK: - Login Item
 
     private func doUpdateLoginItem(enabled: Bool) {

@@ -37,15 +37,6 @@ enum LayoutSwitcher {
         }
     }
 
-    /// Переключает на конкретную раскладку по подстроке ID
-    static func switchTo(containing substring: String) {
-        let sources = installedLayouts()
-        if let target = sources.first(where: { sourceID($0).lowercased().contains(substring.lowercased()) }) {
-            TISEnableInputSource(target)
-            TISSelectInputSource(target)
-        }
-    }
-
     /// Все установленные раскладки
     static func installedLayouts() -> [TISInputSource] {
         let conditions: CFDictionary = [
@@ -77,7 +68,8 @@ enum LayoutSwitcher {
 
     // MARK: - Auto-detect
 
-    private static func autoDetectID1(from sources: [TISInputSource]) -> String {
+    /// Авто-определение «английской» раскладки (используется и из DynamicKeyMapping).
+    static func autoDetectID1(from sources: [TISInputSource]) -> String {
         // Ищем английскую
         for source in sources {
             let id = sourceID(source)
@@ -88,7 +80,8 @@ enum LayoutSwitcher {
         return sources.first.map { sourceID($0) } ?? ""
     }
 
-    private static func autoDetectID2(from sources: [TISInputSource]) -> String {
+    /// Авто-определение второй (не-английской) раскладки.
+    static func autoDetectID2(from sources: [TISInputSource]) -> String {
         let id1 = autoDetectID1(from: sources)
         // Ищем вторую (не английскую)
         for source in sources {

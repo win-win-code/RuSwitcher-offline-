@@ -78,9 +78,9 @@ enum DynamicKeyMapping {
         let layouts = LayoutSwitcher.installedLayouts()
         let currentID = LayoutSwitcher.currentLayoutID()
 
-        // Определяем source и target раскладки
-        let layout1ID = settings.layout1ID.isEmpty ? autoDetectLayout1(from: layouts) : settings.layout1ID
-        let layout2ID = settings.layout2ID.isEmpty ? autoDetectLayout2(from: layouts) : settings.layout2ID
+        // Определяем source и target раскладки (авто-детект — общий с LayoutSwitcher)
+        let layout1ID = settings.layout1ID.isEmpty ? LayoutSwitcher.autoDetectID1(from: layouts) : settings.layout1ID
+        let layout2ID = settings.layout2ID.isEmpty ? LayoutSwitcher.autoDetectID2(from: layouts) : settings.layout2ID
 
         guard let source = layouts.first(where: { LayoutSwitcher.sourceID($0) == currentID }),
               let targetID = (currentID == layout1ID) ? layout2ID : layout1ID as String?,
@@ -104,6 +104,8 @@ enum DynamicKeyMapping {
     static func clearCache() {
         mapCache.removeAll()
     }
+
+    // Авто-детект раскладок живёт в LayoutSwitcher (autoDetectID1/ID2).
 
     // MARK: - Private
 
@@ -151,28 +153,5 @@ enum DynamicKeyMapping {
         }
 
         return char
-    }
-
-    private static func autoDetectLayout1(from layouts: [TISInputSource]) -> String {
-        // Ищем английскую раскладку
-        for layout in layouts {
-            let id = LayoutSwitcher.sourceID(layout)
-            if id.contains("ABC") || id.contains("US") || id.contains("British") {
-                return id
-            }
-        }
-        return layouts.first.map { LayoutSwitcher.sourceID($0) } ?? ""
-    }
-
-    private static func autoDetectLayout2(from layouts: [TISInputSource]) -> String {
-        let layout1 = autoDetectLayout1(from: layouts)
-        // Ищем вторую раскладку (не английскую)
-        for layout in layouts {
-            let id = LayoutSwitcher.sourceID(layout)
-            if id != layout1 {
-                return id
-            }
-        }
-        return ""
     }
 }

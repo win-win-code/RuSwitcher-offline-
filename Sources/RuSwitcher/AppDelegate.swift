@@ -119,17 +119,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let bundleID = Bundle.main.bundleIdentifier ?? "com.ruswitcher.app"
         rslog("Resetting TCC entries for \(bundleID)")
 
-        let resetAcc = Process()
-        resetAcc.launchPath = "/usr/bin/tccutil"
-        resetAcc.arguments = ["reset", "Accessibility", bundleID]
-        try? resetAcc.run()
-        resetAcc.waitUntilExit()
-
-        let resetInp = Process()
-        resetInp.launchPath = "/usr/bin/tccutil"
-        resetInp.arguments = ["reset", "ListenEvent", bundleID]
-        try? resetInp.run()
-        resetInp.waitUntilExit()
+        for service in ["Accessibility", "ListenEvent"] {
+            let reset = Process()
+            reset.launchPath = "/usr/bin/tccutil"
+            reset.arguments = ["reset", service, bundleID]
+            try? reset.run()
+            reset.waitUntilExit()
+        }
 
         rslog("TCC entries reset done")
     }
@@ -186,13 +182,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func restartApp() {
-        let appPath = Bundle.main.bundlePath
-        rslog("Restarting from: \(appPath)")
-        let task = Process()
-        task.launchPath = "/bin/sh"
-        task.arguments = ["-c", "sleep 1; open '\(appPath)'"]
-        try? task.run()
-        NSApplication.shared.terminate(nil)
+        rslog("Restarting from: \(Bundle.main.bundlePath)")
+        AppRelauncher.relaunch()
     }
 
     // MARK: - Start Monitoring
@@ -204,6 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !keyboardMonitor.start(
             onAltTap: { [weak self] in
                 guard let self else { return }
+                guard SettingsManager.shared.autoSwitchEnabled else { return }
                 let wl = self.keyboardMonitor.currentWordLength
                 let pl = self.keyboardMonitor.wordBeforeBoundaryLength
                 let bc = self.keyboardMonitor.boundaryCount
@@ -215,6 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             onAltReconvert: { [weak self] in
                 guard let self else { return }
+                guard SettingsManager.shared.autoSwitchEnabled else { return }
                 if self.textConverter.reconvert() {
                     self.keyboardMonitor.markConverted()
                     LayoutSwitcher.switchToOpposite()
@@ -342,12 +335,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openGitHub() {
-        if let url = URL(string: "https://github.com/rashn/RuSwitcher") {
+        if let url = URL(string: SettingsManager.githubURL) {
             NSWorkspace.shared.open(url)
         }
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        // Не теряем буфер обмена в 2-секундном окне отложенного восстановления
+        // (актуально и при само-обновлении, которое завершает процесс).
+        textConverter.flushPendingClipboardRestore()
+    }
+
     @objc private func quit() {
+        textConverter.flushPendingClipboardRestore()
         perAppLayoutManager.stop()
         keyboardMonitor.stop()
         NSApplication.shared.terminate(nil)

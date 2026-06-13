@@ -4,30 +4,37 @@ import Foundation
 /// Маркер для симулированных событий — KeyboardMonitor их игнорирует
 let kRuSwitcherEventMarker: Int64 = 0x52555300
 
+/// Выделенная очередь для файлового I/O лога — чтобы запись на диск не блокировала
+/// поток обработки событий (event tap висит на главном run loop, а лог пишется
+/// для каждого нажатия при включённом debug).
+private let rsLogQueue = DispatchQueue(label: "com.ruswitcher.log")
+
 func rslog(_ msg: String) {
     // Thread-safe: читаем UserDefaults напрямую (без MainActor)
     guard UserDefaults.standard.bool(forKey: "com.ruswitcher.debugLog") else { return }
 
     let line = "\(Date()): \(msg)\n"
-    let logDir = NSHomeDirectory() + "/Library/Logs/RuSwitcher"
-    let path = logDir + "/ruswitcher.log"
+    rsLogQueue.async {
+        let logDir = NSHomeDirectory() + "/Library/Logs/RuSwitcher"
+        let path = logDir + "/ruswitcher.log"
 
-    // Создаём директорию если нет
-    if !FileManager.default.fileExists(atPath: logDir) {
-        try? FileManager.default.createDirectory(atPath: logDir, withIntermediateDirectories: true)
-    }
-
-    if let handle = FileHandle(forWritingAtPath: path) {
-        handle.seekToEndOfFile()
-        // Ротация: если > 5MB — обрезаем
-        if handle.offsetInFile > 5_000_000 {
-            handle.truncateFile(atOffset: 0)
-            handle.write("--- Log rotated ---\n".data(using: .utf8)!)
+        // Создаём директорию если нет
+        if !FileManager.default.fileExists(atPath: logDir) {
+            try? FileManager.default.createDirectory(atPath: logDir, withIntermediateDirectories: true)
         }
-        handle.write(line.data(using: .utf8)!)
-        handle.closeFile()
-    } else {
-        FileManager.default.createFile(atPath: path, contents: line.data(using: .utf8))
+
+        if let handle = FileHandle(forWritingAtPath: path) {
+            handle.seekToEndOfFile()
+            // Ротация: если > 5MB — обрезаем
+            if handle.offsetInFile > 5_000_000 {
+                handle.truncateFile(atOffset: 0)
+                handle.write("--- Log rotated ---\n".data(using: .utf8)!)
+            }
+            handle.write(line.data(using: .utf8)!)
+            handle.closeFile()
+        } else {
+            FileManager.default.createFile(atPath: path, contents: line.data(using: .utf8))
+        }
     }
 }
 
@@ -125,8 +132,8 @@ final class KeyboardMonitor: @unchecked Sendable {
         // «грязный» модификатор (stale .maskAlternate и т.п.) — иначе счётчик
         // слова не сбрасывается и конвертация захватывает лишние символы.
 
-        // Пробел (49) — единственная граница через которую можно вернуться
-        if keyCode == 49 {
+        // Пробел — единственная граница через которую можно вернуться
+        if keyCode == KC.space {
             if currentWordLength > 0 {
                 wordBeforeBoundaryLength = currentWordLength
                 boundaryCount = 1
@@ -137,20 +144,20 @@ final class KeyboardMonitor: @unchecked Sendable {
             return
         }
 
-        // Enter (36), Tab (48) — полный сброс
-        if keyCode == 36 || keyCode == 48 {
+        // Enter, Tab — полный сброс
+        if keyCode == KC.enter || keyCode == KC.tab {
             fullReset()
             return
         }
 
-        // Стрелки (123=Left, 124=Right, 125=Down, 126=Up) — полный сброс
-        if keyCode >= 123 && keyCode <= 126 {
+        // Стрелки (Left…Up) — полный сброс
+        if keyCode >= KC.left && keyCode <= KC.up {
             fullReset()
             return
         }
 
-        // Backspace (51)
-        if keyCode == 51 {
+        // Backspace
+        if keyCode == KC.backspace {
             if currentWordLength > 0 {
                 currentWordLength -= 1
             } else {

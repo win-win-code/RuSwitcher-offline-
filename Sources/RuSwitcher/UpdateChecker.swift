@@ -90,10 +90,28 @@ enum UpdateChecker {
     // MARK: - Install & Restart
 
     private static func installAndRestart(info: VersionInfo) async {
-        let dmgURL: URL
         let version = info.version
-        let expectedURL = "https://github.com/rashn/RuSwitcher/releases/download/v\(version)/RuSwitcher-\(version).dmg"
-        dmgURL = URL(string: expectedURL)!
+
+        // 0. Версия приходит из сети — не доверяем вслепую (попадёт в URL и в сравнение).
+        guard version.range(of: "^[0-9]+(\\.[0-9]+){1,3}$", options: .regularExpression) != nil else {
+            rslog("Update: rejected malformed version '\(version)'")
+            await showInstallError(L10n.updateVerifyFailed)
+            return
+        }
+
+        // 0a. sha256 обязателен для установки на месте: молча подменять приложение
+        //     keylogger-класса без проверки нельзя. Нет хэша — откат на загрузку
+        //     в браузере, где работает Gatekeeper/нотаризация.
+        guard let expectedSHA = info.sha256, !expectedSHA.isEmpty else {
+            rslog("Update: no sha256 in version.json — falling back to browser download")
+            if let url = URL(string: info.url) { NSWorkspace.shared.open(url) }
+            return
+        }
+
+        guard let dmgURL = URL(string: SettingsManager.releaseDMGURL(version: version)) else {
+            await showInstallError(L10n.updateDownloadFailed)
+            return
+        }
 
         let tmpPath = "/tmp/RuSwitcher-update.dmg"
         let tmpURL = URL(fileURLWithPath: tmpPath)
@@ -113,17 +131,15 @@ enum UpdateChecker {
             return
         }
 
-        // 2. Проверить sha256
-        if let expectedSHA = info.sha256, !expectedSHA.isEmpty {
-            let actualSHA = sha256OfFile(at: tmpPath)
-            if actualSHA != expectedSHA {
-                rslog("Update: sha256 mismatch expected=\(expectedSHA) actual=\(actualSHA ?? "nil")")
-                try? FileManager.default.removeItem(at: tmpURL)
-                await showInstallError(L10n.updateVerifyFailed)
-                return
-            }
-            rslog("Update: sha256 verified")
+        // 2. Проверить sha256 (обязательно)
+        let actualSHA = sha256OfFile(at: tmpPath)
+        guard actualSHA == expectedSHA else {
+            rslog("Update: sha256 mismatch expected=\(expectedSHA) actual=\(actualSHA ?? "nil")")
+            try? FileManager.default.removeItem(at: tmpURL)
+            await showInstallError(L10n.updateVerifyFailed)
+            return
         }
+        rslog("Update: sha256 verified")
 
         // 3. Смонтировать DMG
         let mountPoint = "/tmp/RuSwitcher-update-mount"
@@ -170,7 +186,31 @@ enum UpdateChecker {
         let sourceApp = URL(fileURLWithPath: mountPoint).appendingPathComponent(appName)
         let currentApp = URL(fileURLWithPath: Bundle.main.bundlePath)
 
-        // 5. Атомарно заменить .app
+        // 5. ПРОВЕРКА ПОДПИСИ: единственная реальная защита от подмены кода.
+        //    sha256 защищает лишь от битой загрузки — если подменить и DMG, и хэш,
+        //    спасает только пиннинг Developer ID нашей команды.
+        guard verifyNotarizedSignature(at: sourceApp.path) else {
+            rslog("Update: signature/notarization check FAILED — aborting")
+            await showInstallError(L10n.updateVerifyFailed)
+            return
+        }
+
+        // 5a. Идентичность бандла: тот же bundle id и версия совпадает с заявленной.
+        let mountedInfo = Bundle(url: sourceApp)?.infoDictionary
+        let mountedID = mountedInfo?["CFBundleIdentifier"] as? String
+        let mountedVersion = mountedInfo?["CFBundleShortVersionString"] as? String
+        guard mountedID == Bundle.main.bundleIdentifier else {
+            rslog("Update: bundle id mismatch (\(mountedID ?? "nil"))")
+            await showInstallError(L10n.updateVerifyFailed)
+            return
+        }
+        guard mountedVersion == version else {
+            rslog("Update: bundle version mismatch — announced \(version), contains \(mountedVersion ?? "nil")")
+            await showInstallError(L10n.updateVerifyFailed)
+            return
+        }
+
+        // 6. Атомарно заменить .app
         do {
             _ = try fm.replaceItemAt(currentApp, withItemAt: sourceApp)
             rslog("Update: app replaced successfully")
@@ -180,14 +220,28 @@ enum UpdateChecker {
             return
         }
 
-        // 6. Перезапуск
+        // 7. Перезапуск
         rslog("Update: restarting...")
-        let appPath = currentApp.path
-        let task = Process()
-        task.launchPath = "/bin/sh"
-        task.arguments = ["-c", "sleep 1; open '\(appPath)'"]
-        try? task.run()
-        NSApplication.shared.terminate(nil)
+        AppRelauncher.relaunch(bundlePath: currentApp.path)
+    }
+
+    /// Проверяет, что бандл подписан Developer ID нашей команды и проходит строгую
+    /// проверку целостности (codesign --verify с пиннингом Team ID).
+    private static func verifyNotarizedSignature(at path: String) -> Bool {
+        let requirement = "anchor apple generic and certificate leaf[subject.OU] = \"\(SettingsManager.developerTeamID)\""
+        let process = Process()
+        process.launchPath = "/usr/bin/codesign"
+        process.arguments = ["--verify", "--deep", "--strict", "-R=\(requirement)", path]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            rslog("Update: codesign verify error — \(error)")
+            return false
+        }
     }
 
     private static func sha256OfFile(at path: String) -> String? {
@@ -208,31 +262,25 @@ enum UpdateChecker {
         }
     }
 
-    private static func showInstallError(_ message: String) async {
+    private static func showAlert(style: NSAlert.Style, title: String, message: String) {
         let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = L10n.updateInstallFailed
+        alert.alertStyle = style
+        alert.messageText = title
         alert.informativeText = message
         alert.addButton(withTitle: "OK")
         alert.runModal()
     }
 
+    private static func showInstallError(_ message: String) async {
+        showAlert(style: .warning, title: L10n.updateInstallFailed, message: message)
+    }
+
     private static func showUpToDateAlert() async {
-        let alert = NSAlert()
-        alert.alertStyle = .informational
-        alert.messageText = L10n.updateUpToDate
-        alert.informativeText = L10n.updateLatestInstalled
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+        showAlert(style: .informational, title: L10n.updateUpToDate, message: L10n.updateLatestInstalled)
     }
 
     private static func showErrorAlert() async {
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = L10n.updateCheckFailed
-        alert.informativeText = L10n.updateCheckFailedDetail
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+        showAlert(style: .warning, title: L10n.updateCheckFailed, message: L10n.updateCheckFailedDetail)
     }
 
     /// Сравнивает версии ("2.0.1" > "1.9.0")

@@ -75,16 +75,24 @@ final class TextConverter {
         cancelClipboardRestore()
         savedClipboardItems = snapshotPasteboard(pasteboard)
 
+        var conversionSucceeded = false
+        defer {
+            // Любой ранний выход без успеха обязан вернуть буфер пользователю —
+            // иначе clipboard остаётся пустым или с конвертированным текстом.
+            if !conversionSucceeded { restoreClipboardNow() }
+        }
+
         // --- Попытка 1: уже есть выделенный текст? ---
         if let text = tryCopy(pasteboard) {
-            rslog("convert: selection text='\(text)'")
-            let converted = DynamicKeyMapping.convert(text)
+            rslog("convert: selection len=\(text.count)")
+            let converted = DynamicKeyMapping.convert(text).precomposedStringWithCanonicalMapping
             pasteText(converted, pasteboard: pasteboard)
             // Курсор остаётся в конце вставленного текста — не пере-выделяем,
             // чтобы следующий ввод не затёр результат. Для reconvert используется
             // унифицированный путь через selectBack(lastConvertedCount).
             lastConvertedCount = converted.count
             lastBoundaryCount = 0
+            conversionSucceeded = true
             scheduleClipboardRestore()
             return true
         }
@@ -97,10 +105,7 @@ final class TextConverter {
             charCount = wordLength
             usedBoundary = 0
         } else if prevWordLength > 0 && boundaryCount > 0 {
-            for _ in 0..<boundaryCount {
-                simKey(keyCode: 123, flags: []) // Left
-                usleep(3_000)
-            }
+            moveLeft(boundaryCount)
             charCount = prevWordLength
             usedBoundary = boundaryCount
         } else {
@@ -114,25 +119,20 @@ final class TextConverter {
 
         guard let text = tryCopy(pasteboard) else {
             rslog("convert: copy failed")
-            simKey(keyCode: 124, flags: []) // Right — снять выделение
-            for _ in 0..<usedBoundary {
-                simKey(keyCode: 124, flags: [])
-                usleep(3_000)
-            }
+            simKey(keyCode: KC.right, flags: []) // снять выделение
+            moveRight(usedBoundary)
             return false
         }
 
-        rslog("convert: word='\(text)'")
-        let converted = DynamicKeyMapping.convert(text)
+        rslog("convert: word len=\(text.count)")
+        let converted = DynamicKeyMapping.convert(text).precomposedStringWithCanonicalMapping
         pasteText(converted, pasteboard: pasteboard)
 
-        for _ in 0..<usedBoundary {
-            simKey(keyCode: 124, flags: [])
-            usleep(3_000)
-        }
+        moveRight(usedBoundary)
 
         lastConvertedCount = converted.count
         lastBoundaryCount = usedBoundary
+        conversionSucceeded = true
         scheduleClipboardRestore()
         return true
     }
@@ -153,33 +153,24 @@ final class TextConverter {
         // Отменяем отложенное восстановление clipboard — мы ещё работаем
         cancelClipboardRestore()
 
-        for _ in 0..<lastBoundaryCount {
-            simKey(keyCode: 123, flags: [])
-            usleep(3_000)
-        }
+        moveLeft(lastBoundaryCount)
 
         selectBack(lastConvertedCount)
         usleep(80_000)  // дать приложению обработать выделение
 
         guard let text = tryCopy(pasteboard) else {
             rslog("reconvert: copy failed, count=\(lastConvertedCount)")
-            simKey(keyCode: 124, flags: [])
-            for _ in 0..<lastBoundaryCount {
-                simKey(keyCode: 124, flags: [])
-                usleep(3_000)
-            }
+            simKey(keyCode: KC.right, flags: [])
+            moveRight(lastBoundaryCount)
             scheduleClipboardRestore()
             return false
         }
 
-        rslog("reconvert: '\(text)' → converting")
-        let converted = DynamicKeyMapping.convert(text)
+        rslog("reconvert: len=\(text.count) → converting")
+        let converted = DynamicKeyMapping.convert(text).precomposedStringWithCanonicalMapping
         pasteText(converted, pasteboard: pasteboard)
 
-        for _ in 0..<lastBoundaryCount {
-            simKey(keyCode: 124, flags: [])
-            usleep(3_000)
-        }
+        moveRight(lastBoundaryCount)
 
         lastConvertedCount = converted.count
         scheduleClipboardRestore()
@@ -197,7 +188,7 @@ final class TextConverter {
     private func pasteText(_ text: String, pasteboard: NSPasteboard) {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
-        simKey(keyCode: 9, flags: .maskCommand) // Cmd+V
+        simKey(keyCode: KC.letterV, flags: .maskCommand) // Cmd+V
         usleep(150_000) // 150мс — дать приложению вставить текст и обновить курсор
     }
 
@@ -205,6 +196,23 @@ final class TextConverter {
     private func cancelClipboardRestore() {
         clipboardRestoreWork?.cancel()
         clipboardRestoreWork = nil
+    }
+
+    /// Немедленно возвращает буфер обмена пользователю (для путей-неудач).
+    private func restoreClipboardNow() {
+        cancelClipboardRestore()
+        guard let saved = savedClipboardItems else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        if !saved.isEmpty { pasteboard.writeObjects(saved) }
+        savedClipboardItems = nil
+    }
+
+    /// Сбрасывает отложенное восстановление немедленно — вызывается перед
+    /// завершением приложения, чтобы не потерять буфер в 2-секундном окне.
+    func flushPendingClipboardRestore() {
+        guard clipboardRestoreWork != nil else { return }
+        restoreClipboardNow()
     }
 
     /// Планирует восстановление clipboard через 2 секунды
@@ -249,7 +257,7 @@ final class TextConverter {
             pasteboard.clearContents()
             let oldCount = pasteboard.changeCount
 
-            simKey(keyCode: 8, flags: .maskCommand) // Cmd+C
+            simKey(keyCode: KC.letterC, flags: .maskCommand) // Cmd+C
             usleep(attempt == 0 ? 80_000 : 120_000)
 
             if pasteboard.changeCount != oldCount,
@@ -264,15 +272,24 @@ final class TextConverter {
 
     /// Выделяет N символов влево (Shift+Left × N)
     private func selectBack(_ count: Int) {
-        guard let source = makeSource() else { return }
         for _ in 0..<count {
-            guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 123, keyDown: true),
-                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 123, keyDown: false)
-            else { continue }
-            keyDown.flags = .maskShift
-            keyUp.flags = .maskShift
-            keyDown.post(tap: .cghidEventTap)
-            keyUp.post(tap: .cghidEventTap)
+            simKey(keyCode: KC.left, flags: .maskShift)
+            usleep(3_000)
+        }
+    }
+
+    /// Сдвигает курсор влево на N символов
+    private func moveLeft(_ count: Int) {
+        for _ in 0..<count {
+            simKey(keyCode: KC.left, flags: [])
+            usleep(3_000)
+        }
+    }
+
+    /// Сдвигает курсор вправо на N символов (восстановление границ-пробелов)
+    private func moveRight(_ count: Int) {
+        for _ in 0..<count {
+            simKey(keyCode: KC.right, flags: [])
             usleep(3_000)
         }
     }
