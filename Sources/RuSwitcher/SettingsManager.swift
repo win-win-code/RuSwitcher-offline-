@@ -21,6 +21,9 @@ final class SettingsManager: @unchecked Sendable {
         static let permissionsWereGranted = "com.ruswitcher.permissionsWereGranted"
         static let launchAtLoginAsked = "com.ruswitcher.launchAtLoginAsked"
         static let perAppLayout = "com.ruswitcher.perAppLayout"
+        static let triggerKey = "com.ruswitcher.triggerKey"
+        static let triggerRightOnly = "com.ruswitcher.triggerRightOnly"
+        static let triggerDoubleTap = "com.ruswitcher.triggerDoubleTap"
     }
 
     private init() {}
@@ -101,6 +104,30 @@ final class SettingsManager: @unchecked Sendable {
         get { defaults.bool(forKey: Keys.perAppLayout) }
         set { defaults.set(newValue, forKey: Keys.perAppLayout) }
     }
+
+    // MARK: - Триггер конвертации
+
+    /// Клавиша-триггер: "option" | "command" | "control" | "shift" | "capsLock".
+    /// Дефолт — option (как было до 2.3, поведение не меняется).
+    var triggerKey: String {
+        get { defaults.string(forKey: Keys.triggerKey) ?? "option" }
+        set { defaults.set(newValue, forKey: Keys.triggerKey) }
+    }
+
+    /// Реагировать только на правую клавишу модификатора (для option/command/control/shift).
+    var triggerRightOnly: Bool {
+        get { defaults.bool(forKey: Keys.triggerRightOnly) }
+        set { defaults.set(newValue, forKey: Keys.triggerRightOnly) }
+    }
+
+    /// Двойной тап вместо одиночного.
+    var triggerDoubleTap: Bool {
+        get { defaults.bool(forKey: Keys.triggerDoubleTap) }
+        set { defaults.set(newValue, forKey: Keys.triggerDoubleTap) }
+    }
+
+    /// Caps Lock как триггер требует consume-tap (чтобы подавить переключение регистра).
+    var triggerIsCapsLock: Bool { triggerKey == "capsLock" }
 
     var donateURL: String { "https://boosty.to/ruswitcher" }
     var contactEmail: String { "xrashid@gmail.com" }

@@ -38,6 +38,34 @@ func rslog(_ msg: String) {
     }
 }
 
+/// Конфигурация клавиши-триггера (читается из настроек, кэшируется в KeyboardMonitor).
+struct TriggerConfig {
+    enum Kind {
+        case modifier(mask: CGEventFlags, left: UInt16, right: UInt16)
+        case capsLock
+    }
+    let kind: Kind
+    let rightOnly: Bool
+    let doubleTap: Bool
+
+    var isCapsLock: Bool { if case .capsLock = kind { return true } else { return false } }
+
+    static func current() -> TriggerConfig {
+        let s = SettingsManager.shared
+        let kind: Kind
+        switch s.triggerKey {
+        case "command": kind = .modifier(mask: .maskCommand, left: KC.leftCommand, right: KC.rightCommand)
+        case "control": kind = .modifier(mask: .maskControl, left: KC.leftControl, right: KC.rightControl)
+        case "shift":   kind = .modifier(mask: .maskShift,   left: KC.leftShift,   right: KC.rightShift)
+        // ТЕХДОЛГ: нативный Caps Lock убран из UI (нестабилен — HID-дебаунс/тоггл,
+        // нужен HID-драйвер уровня Karabiner). Код consume-пути оставлен на будущее.
+        case "capsLock": kind = .capsLock
+        default:        kind = .modifier(mask: .maskAlternate, left: KC.leftOption, right: KC.rightOption)
+        }
+        return TriggerConfig(kind: kind, rightOnly: s.triggerRightOnly, doubleTap: s.triggerDoubleTap)
+    }
+}
+
 final class KeyboardMonitor: @unchecked Sendable {
     fileprivate var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -51,12 +79,23 @@ final class KeyboardMonitor: @unchecked Sendable {
     /// Были ли реальные нажатия после последней конвертации?
     private(set) var keysTypedSinceConversion = true
 
+    /// Keycodes набираемого слова — для движка перепечатки (без буфера обмена)
+    private(set) var currentWordKeys: [(keyCode: UInt16, shift: Bool)] = []
+    /// Keycodes слова перед последней границей-пробелом
+    private(set) var prevWordKeys: [(keyCode: UInt16, shift: Bool)] = []
+
     private var onAltTap: (() -> Void)?
     private var onAltReconvert: (() -> Void)?
 
-    // Детект одиночного тапа Alt
-    private var altPressedAlone = false
-    private var altPressTime: Date?
+    // Конфиг триггера (кэш; обновляется в start/reconfigure)
+    private var triggerConfig = TriggerConfig.current()
+
+    // Детект соло-тапа модификатора
+    private var triggerArmed = false
+    private var triggerPressTime: Date?
+    // Для двойного тапа
+    private var lastTapTime: Date?
+    private let tapWindow: TimeInterval = 0.4
 
     func start(
         onAltTap: @escaping () -> Void,
@@ -72,15 +111,22 @@ final class KeyboardMonitor: @unchecked Sendable {
             CGRequestListenEventAccess()
         }
 
-        rslog("Attempting to create event tap...")
+        triggerConfig = TriggerConfig.current()
+        rslog("Attempting to create event tap... (trigger=\(SettingsManager.shared.triggerKey) capsLock=\(triggerConfig.isCapsLock))")
         let mask: CGEventMask =
             (1 << CGEventType.keyDown.rawValue)
             | (1 << CGEventType.flagsChanged.rawValue)
+            | (1 << CGEventType.leftMouseDown.rawValue)
+            | (1 << CGEventType.rightMouseDown.rawValue)
+
+        // Caps Lock требует активного tap (consume), чтобы подавить переключение
+        // регистра. Для модификаторов оставляем listenOnly — не вмешиваемся в ввод.
+        let options: CGEventTapOptions = triggerConfig.isCapsLock ? .defaultTap : .listenOnly
 
         guard let tap = CGEvent.tapCreate(
             tap: .cghidEventTap,
             place: .tailAppendEventTap,
-            options: .listenOnly,
+            options: options,
             eventsOfInterest: mask,
             callback: keyboardCallback,
             userInfo: Unmanaged.passUnretained(self).toOpaque()
@@ -109,10 +155,21 @@ final class KeyboardMonitor: @unchecked Sendable {
         runLoopSource = nil
     }
 
+    /// Перезапускает tap с актуальным конфигом триггера. Нужен при смене настройки —
+    /// особенно при переключении на/с Caps Lock, т.к. меняется режим tap (consume).
+    func reconfigure() {
+        guard let t = onAltTap, let r = onAltReconvert else { return }
+        rslog("Reconfiguring trigger…")
+        stop()
+        _ = start(onAltTap: t, onAltReconvert: r)
+    }
+
     func markConverted() {
         currentWordLength = 0
         wordBeforeBoundaryLength = 0
         boundaryCount = 0
+        currentWordKeys = []
+        prevWordKeys = []
         keysTypedSinceConversion = false
     }
 
@@ -120,12 +177,24 @@ final class KeyboardMonitor: @unchecked Sendable {
         currentWordLength = 0
         wordBeforeBoundaryLength = 0
         boundaryCount = 0
+        currentWordKeys = []
+        prevWordKeys = []
+    }
+
+    /// Сброс буфера при клике мышью — иначе backspace перепечатки сотрёт не то
+    /// (курсор мог уехать в другое место).
+    fileprivate func resetBuffersOnClick() {
+        triggerArmed = false
+        lastTapTime = nil
+        keysTypedSinceConversion = true
+        fullReset()
     }
 
     // MARK: - Event Handling
 
     fileprivate func handleKeyDown(keyCode: UInt16, flags: CGEventFlags) {
-        altPressedAlone = false
+        triggerArmed = false
+        lastTapTime = nil
         keysTypedSinceConversion = true
 
         // Структурные клавиши обрабатываем ВСЕГДА, даже если в flags остался
@@ -137,10 +206,12 @@ final class KeyboardMonitor: @unchecked Sendable {
             if currentWordLength > 0 {
                 wordBeforeBoundaryLength = currentWordLength
                 boundaryCount = 1
+                prevWordKeys = currentWordKeys
             } else {
                 boundaryCount += 1
             }
             currentWordLength = 0
+            currentWordKeys = []
             return
         }
 
@@ -160,6 +231,7 @@ final class KeyboardMonitor: @unchecked Sendable {
         if keyCode == KC.backspace {
             if currentWordLength > 0 {
                 currentWordLength -= 1
+                if !currentWordKeys.isEmpty { currentWordKeys.removeLast() }
             } else {
                 fullReset()
             }
@@ -171,43 +243,74 @@ final class KeyboardMonitor: @unchecked Sendable {
         if !modifiers.isEmpty { return }
 
         if KeyMapping.keycodeToEN[keyCode] != nil {
+            currentWordKeys.append((keyCode: keyCode, shift: flags.contains(.maskShift)))
             currentWordLength += 1
             wordBeforeBoundaryLength = 0
             boundaryCount = 0
+            prevWordKeys = []
         } else {
             // Esc, F-клавиши, и т.д. — полный сброс
             fullReset()
         }
     }
 
-    fileprivate func handleFlagsChanged(flags: CGEventFlags) {
-        let altDown = flags.contains(.maskAlternate)
+    /// Возвращает true, если событие надо «съесть» (только Caps Lock в consume-режиме).
+    fileprivate func handleFlagsChanged(flags: CGEventFlags, keyCode: UInt16) -> Bool {
+        switch triggerConfig.kind {
+        case .capsLock:
+            guard keyCode == KC.capsLock else { return false }
+            // Caps Lock шлёт одно событие на нажатие. Используем как тап и съедаем,
+            // чтобы не переключался регистр.
+            registerTap()
+            return true
 
-        if altDown {
-            altPressedAlone = true
-            altPressTime = Date()
-        } else if altPressedAlone, let pressTime = altPressTime {
-            let elapsed = Date().timeIntervalSince(pressTime)
-            rslog("alt: elapsed=\(String(format: "%.3f", elapsed)) wordLen=\(currentWordLength) prevLen=\(wordBeforeBoundaryLength) boundary=\(boundaryCount) keysSince=\(keysTypedSinceConversion)")
+        case let .modifier(mask, left, right):
+            let accepted: Set<UInt16> = triggerConfig.rightOnly ? [right] : [left, right]
+            let allMods: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift]
+            let otherMods = allMods.subtracting(mask)
 
-            if elapsed < 0.4 {
-                if !keysTypedSinceConversion {
-                    // Повторный Alt после конвертации — reconvert
-                    rslog("alt: RECONVERT")
-                    DispatchQueue.main.async { [weak self] in
-                        self?.onAltReconvert?()
-                    }
+            if flags.contains(mask) {
+                // нажатие: армим только если это нужная клавиша и нет других модификаторов
+                if accepted.contains(keyCode) && flags.intersection(otherMods).isEmpty {
+                    triggerArmed = true
+                    triggerPressTime = Date()
                 } else {
-                    // Всегда вызываем convert — он сам проверит выделение и счётчики
-                    rslog("alt: CONVERT")
-                    DispatchQueue.main.async { [weak self] in
-                        self?.onAltTap?()
-                    }
+                    triggerArmed = false  // не та сторона / комбо
                 }
+            } else {
+                // отпускание: соло-тап нужной клавиши, быстро и без клавиш между
+                if triggerArmed, accepted.contains(keyCode), let t = triggerPressTime,
+                   Date().timeIntervalSince(t) < tapWindow {
+                    registerTap()
+                }
+                triggerArmed = false
+                triggerPressTime = nil
             }
+            return false
+        }
+    }
 
-            altPressedAlone = false
-            altPressTime = nil
+    /// Учитывает одиночный/двойной тап и запускает конвертацию.
+    private func registerTap() {
+        if triggerConfig.doubleTap {
+            if let last = lastTapTime, Date().timeIntervalSince(last) < tapWindow {
+                lastTapTime = nil
+                fireConversion()
+            } else {
+                lastTapTime = Date()  // ждём второй тап
+            }
+        } else {
+            fireConversion()
+        }
+    }
+
+    private func fireConversion() {
+        if !keysTypedSinceConversion {
+            rslog("trigger: RECONVERT")
+            DispatchQueue.main.async { [weak self] in self?.onAltReconvert?() }
+        } else {
+            rslog("trigger: CONVERT")
+            DispatchQueue.main.async { [weak self] in self?.onAltTap?() }
         }
     }
 }
@@ -245,7 +348,12 @@ private func keyboardCallback(
         let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
         monitor.handleKeyDown(keyCode: keyCode, flags: event.flags)
     } else if type == .flagsChanged {
-        monitor.handleFlagsChanged(flags: event.flags)
+        let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+        if monitor.handleFlagsChanged(flags: event.flags, keyCode: keyCode) {
+            return nil  // съедаем Caps Lock, чтобы не переключался регистр
+        }
+    } else if type == .leftMouseDown || type == .rightMouseDown {
+        monitor.resetBuffersOnClick()
     }
 
     return Unmanaged.passRetained(event)

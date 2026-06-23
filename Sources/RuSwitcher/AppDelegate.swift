@@ -37,6 +37,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsController.onLanguageChanged = { [weak self] in
             self?.rebuildMenu()
         }
+        settingsController.onTriggerChanged = { [weak self] in
+            self?.keyboardMonitor.reconfigure()
+        }
     }
 
     private func startPerAppLayout() {
@@ -212,10 +215,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onAltTap: { [weak self] in
                 guard let self else { return }
                 guard SettingsManager.shared.autoSwitchEnabled else { return }
-                let wl = self.keyboardMonitor.currentWordLength
-                let pl = self.keyboardMonitor.wordBeforeBoundaryLength
+                let keys = self.keyboardMonitor.currentWordKeys
+                let prevKeys = self.keyboardMonitor.prevWordKeys
                 let bc = self.keyboardMonitor.boundaryCount
-                if self.textConverter.convert(wordLength: wl, prevWordLength: pl, boundaryCount: bc) {
+                if self.textConverter.convert(wordKeys: keys, prevWordKeys: prevKeys, boundaryCount: bc) {
                     self.keyboardMonitor.markConverted()
                     LayoutSwitcher.switchToOpposite()
                     self.updateStatusIcon()

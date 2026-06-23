@@ -105,6 +105,37 @@ enum DynamicKeyMapping {
         mapCache.removeAll()
     }
 
+    /// Конвертирует набранные keycodes в строки исходной и целевой раскладок —
+    /// для движка перепечатки (не читаем поле, не трогаем буфер обмена).
+    /// nil — если раскладки не определились (тогда вызывающий падает на clipboard).
+    static func convertKeys(_ keys: [(keyCode: UInt16, shift: Bool)]) -> (original: String, converted: String)? {
+        guard !keys.isEmpty else { return nil }
+        let settings = SettingsManager.shared
+        let layouts = LayoutSwitcher.installedLayouts()
+        let currentID = LayoutSwitcher.currentLayoutID()
+        let layout1ID = settings.layout1ID.isEmpty ? LayoutSwitcher.autoDetectID1(from: layouts) : settings.layout1ID
+        let layout2ID = settings.layout2ID.isEmpty ? LayoutSwitcher.autoDetectID2(from: layouts) : settings.layout2ID
+
+        guard let source = layouts.first(where: { LayoutSwitcher.sourceID($0) == currentID }),
+              let targetID = (currentID == layout1ID) ? layout2ID : layout1ID as String?,
+              let target = layouts.first(where: { LayoutSwitcher.sourceID($0) == targetID }),
+              let sourceData = layoutDataForSource(source),
+              let targetData = layoutDataForSource(target) else {
+            return nil
+        }
+
+        var original = "", converted = ""
+        for k in keys {
+            guard let sc = translateKeycode(k.keyCode, layoutData: sourceData, shift: k.shift),
+                  let tc = translateKeycode(k.keyCode, layoutData: targetData, shift: k.shift) else {
+                return nil
+            }
+            original.append(sc)
+            converted.append(tc)
+        }
+        return (original, converted)
+    }
+
     // Авто-детект раскладок живёт в LayoutSwitcher (autoDetectID1/ID2).
 
     // MARK: - Private

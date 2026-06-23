@@ -17,6 +17,7 @@ final class SettingsWindowController {
     var onAutoSwitchChanged: ((Bool) -> Void)?
     var onPerAppLayoutChanged: ((Bool) -> Void)?
     var onLanguageChanged: (() -> Void)?
+    var onTriggerChanged: (() -> Void)?
 
     func showWindow() {
         if let window {
@@ -26,7 +27,7 @@ final class SettingsWindowController {
         }
 
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 420),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 560),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -60,8 +61,8 @@ final class SettingsWindowController {
         let item = NSTabViewItem()
         item.label = L10n.settingsTabGeneral
 
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 360))
-        var y: CGFloat = 320
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 500))
+        var y: CGFloat = 460
 
         // Автопереключение
         let autoSwitch = NSButton(checkboxWithTitle: L10n.settingsAutoSwitch, target: self, action: #selector(autoSwitchChanged))
@@ -70,6 +71,37 @@ final class SettingsWindowController {
         view.addSubview(autoSwitch)
         autoSwitchCheckbox = autoSwitch
         y -= 30
+
+        // Триггер конвертации
+        let triggerLabel = NSTextField(labelWithString: L10n.settingsTrigger)
+        triggerLabel.frame = NSRect(x: 20, y: y, width: 150, height: 22)
+        view.addSubview(triggerLabel)
+
+        let triggerPopup = NSPopUpButton(frame: NSRect(x: 175, y: y - 2, width: 255, height: 26))
+        populateTriggerPopup(triggerPopup)
+        triggerPopup.target = self
+        triggerPopup.action = #selector(triggerChanged)
+        view.addSubview(triggerPopup)
+        y -= 34
+
+        let rightOnlyCheckbox = NSButton(checkboxWithTitle: L10n.settingsTriggerRightOnly, target: self, action: #selector(triggerRightOnlyChanged))
+        rightOnlyCheckbox.frame = NSRect(x: 40, y: y, width: 390, height: 22)
+        rightOnlyCheckbox.state = SettingsManager.shared.triggerRightOnly ? .on : .off
+        view.addSubview(rightOnlyCheckbox)
+        y -= 26
+
+        let doubleTapCheckbox = NSButton(checkboxWithTitle: L10n.settingsTriggerDoubleTap, target: self, action: #selector(triggerDoubleTapChanged))
+        doubleTapCheckbox.frame = NSRect(x: 40, y: y, width: 390, height: 22)
+        doubleTapCheckbox.state = SettingsManager.shared.triggerDoubleTap ? .on : .off
+        view.addSubview(doubleTapCheckbox)
+        y -= 26
+
+        let triggerHint = NSTextField(wrappingLabelWithString: L10n.settingsTriggerHint)
+        triggerHint.frame = NSRect(x: 40, y: y - 22, width: 400, height: 36)
+        triggerHint.font = .systemFont(ofSize: 11)
+        triggerHint.textColor = .secondaryLabelColor
+        view.addSubview(triggerHint)
+        y -= 48
 
         // Запуск при логине
         let loginCheckbox = NSButton(checkboxWithTitle: L10n.settingsLaunchAtLogin, target: self, action: #selector(launchAtLoginChanged))
@@ -302,6 +334,25 @@ final class SettingsWindowController {
         (popup.selectedItem?.representedObject as? String) ?? ""
     }
 
+    // MARK: - Trigger Popup
+
+    private func populateTriggerPopup(_ popup: NSPopUpButton) {
+        popup.removeAllItems()
+        // Имена клавиш не локализуем — это стандартные обозначения Apple.
+        let items: [(key: String, title: String)] = [
+            ("option", "Option ⌥ (Alt)"),
+            ("command", "Command ⌘"),
+            ("control", "Control ⌃"),
+            ("shift", "Shift ⇧"),
+            // Caps Lock убран: нативный перехват нестабилен (HID-дебаунс/тоггл) — см. техдолг.
+        ]
+        for it in items {
+            popup.addItem(withTitle: it.title)
+            popup.menu?.items.last?.representedObject = it.key as NSString
+        }
+        selectItem(in: popup, matching: SettingsManager.shared.triggerKey)
+    }
+
     // MARK: - Actions
 
     @objc private func autoSwitchChanged(_ sender: NSButton) {
@@ -342,6 +393,21 @@ final class SettingsWindowController {
         let enabled = sender.state == .on
         SettingsManager.shared.perAppLayout = enabled
         onPerAppLayoutChanged?(enabled)
+    }
+
+    @objc private func triggerChanged(_ sender: NSPopUpButton) {
+        SettingsManager.shared.triggerKey = (sender.selectedItem?.representedObject as? String) ?? "option"
+        onTriggerChanged?()
+    }
+
+    @objc private func triggerRightOnlyChanged(_ sender: NSButton) {
+        SettingsManager.shared.triggerRightOnly = sender.state == .on
+        onTriggerChanged?()
+    }
+
+    @objc private func triggerDoubleTapChanged(_ sender: NSButton) {
+        SettingsManager.shared.triggerDoubleTap = sender.state == .on
+        onTriggerChanged?()
     }
 
     @objc private func debugLogChanged(_ sender: NSButton) {

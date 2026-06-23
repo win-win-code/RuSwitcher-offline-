@@ -11,6 +11,11 @@ final class TextConverter {
     private var clipboardRestoreWork: DispatchWorkItem?
     private var isConverting = false
 
+    // Состояние движка перепечатки (буфер нажатий → юникод-вставка)
+    private var lastOriginal = ""
+    private var lastConverted = ""
+    private var lastWasBuffer = false
+
     /// Создаёт CGEventSource с маркером, чтобы KeyboardMonitor игнорировал наши события
     private func makeSource() -> CGEventSource? {
         let source = CGEventSource(stateID: .hidSystemState)
@@ -58,14 +63,69 @@ final class TextConverter {
 
     // MARK: - Public API
 
-    /// Конвертирует текст. Возвращает true при успехе.
+    /// Движок перепечатки: стираем набранное и впечатываем конвертированное через
+    /// юникод-вставку — без буфера обмена и без выделения (работает в Atom/Electron).
+    /// Падает на clipboard-движок, если буфера нет (текст выделен мышью) или
+    /// раскладки не определились.
+    func convert(wordKeys: [(keyCode: UInt16, shift: Bool)], prevWordKeys: [(keyCode: UInt16, shift: Bool)], boundaryCount: Int) -> Bool {
+        let keys: [(keyCode: UInt16, shift: Bool)]
+        let trailingSpaces: Int
+        if !wordKeys.isEmpty {
+            keys = wordKeys; trailingSpaces = 0
+        } else if !prevWordKeys.isEmpty && boundaryCount > 0 {
+            keys = prevWordKeys; trailingSpaces = boundaryCount
+        } else {
+            // нет буфера — возможно, выделен мышью старый текст: пусть решает clipboard
+            return convertViaClipboard(wordLength: 0, prevWordLength: 0, boundaryCount: 0)
+        }
+
+        guard let pair = DynamicKeyMapping.convertKeys(keys) else {
+            rslog("buffer convert: layouts not resolved — fallback to clipboard")
+            return convertViaClipboard(wordLength: wordKeys.count, prevWordLength: prevWordKeys.count, boundaryCount: boundaryCount)
+        }
+
+        guard !isConverting else { return false }
+        isConverting = true
+        defer { isConverting = false }
+
+        let spaces = String(repeating: " ", count: trailingSpaces)
+        rslog("buffer convert: \(keys.count) keys (+\(trailingSpaces) sp)")
+        backspace(keys.count + trailingSpaces)
+        usleep(20_000)
+        insertText(pair.converted + spaces)
+
+        lastOriginal = pair.original + spaces
+        lastConverted = pair.converted + spaces
+        lastWasBuffer = true
+        return true
+    }
+
+    /// Повторная конвертация (второй триггер) — на тот движок, которым делали последнюю.
+    func reconvert() -> Bool {
+        guard !isConverting else { return false }
+        if lastWasBuffer {
+            guard !lastConverted.isEmpty else { return false }
+            isConverting = true
+            defer { isConverting = false }
+            rslog("buffer reconvert")
+            backspace(lastConverted.count)
+            usleep(20_000)
+            insertText(lastOriginal)
+            let tmp = lastOriginal; lastOriginal = lastConverted; lastConverted = tmp
+            return true
+        }
+        return reconvertViaClipboard()
+    }
+
+    /// Конвертация через буфер обмена (фолбэк: выделенный мышью текст и т.п.).
     /// Сначала проверяет выделение, потом пробует слово по счётчику.
-    func convert(wordLength: Int, prevWordLength: Int, boundaryCount: Int) -> Bool {
+    func convertViaClipboard(wordLength: Int, prevWordLength: Int, boundaryCount: Int) -> Bool {
         guard !isConverting else {
             rslog("convert: skipped — already converting")
             return false
         }
         isConverting = true
+        lastWasBuffer = false
         defer { isConverting = false }
 
         if !isFocusedElementEditable() {
@@ -137,8 +197,8 @@ final class TextConverter {
         return true
     }
 
-    /// Повторная конвертация (второй Alt)
-    func reconvert() -> Bool {
+    /// Повторная конвертация через буфер обмена (фолбэк).
+    private func reconvertViaClipboard() -> Bool {
         guard !isConverting else {
             rslog("reconvert: skipped — already converting")
             return false
@@ -180,9 +240,34 @@ final class TextConverter {
     func clearState() {
         lastConvertedCount = 0
         lastBoundaryCount = 0
+        lastOriginal = ""
+        lastConverted = ""
+        lastWasBuffer = false
     }
 
     // MARK: - Private
+
+    /// Стирает n символов (Backspace × n) — для движка перепечатки.
+    private func backspace(_ n: Int) {
+        for _ in 0..<n {
+            simKey(keyCode: KC.backspace, flags: [])
+            usleep(3_000)
+        }
+    }
+
+    /// Впечатывает строку напрямую (юникод-вставка), без буфера обмена.
+    private func insertText(_ text: String) {
+        guard !text.isEmpty, let source = makeSource() else { return }
+        let utf16 = Array(text.utf16)
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else { return }
+        utf16.withUnsafeBufferPointer { buf in
+            down.keyboardSetUnicodeString(stringLength: buf.count, unicodeString: buf.baseAddress)
+            up.keyboardSetUnicodeString(stringLength: buf.count, unicodeString: buf.baseAddress)
+        }
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
+    }
 
     /// Вставляет текст через Cmd+V и ждёт завершения
     private func pasteText(_ text: String, pasteboard: NSPasteboard) {

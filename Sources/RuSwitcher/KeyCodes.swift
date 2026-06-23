@@ -13,4 +13,15 @@ enum KC {
     static let right: UInt16 = 124
     static let down: UInt16 = 125
     static let up: UInt16 = 126
+
+    // Модификаторы (для конфигурируемого триггера; различаем лево/право)
+    static let rightCommand: UInt16 = 54
+    static let leftCommand: UInt16 = 55
+    static let leftShift: UInt16 = 56
+    static let capsLock: UInt16 = 57
+    static let leftOption: UInt16 = 58
+    static let leftControl: UInt16 = 59
+    static let rightShift: UInt16 = 60
+    static let rightOption: UInt16 = 61
+    static let rightControl: UInt16 = 62
 }
