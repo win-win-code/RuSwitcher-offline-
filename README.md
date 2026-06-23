@@ -40,7 +40,7 @@ Typed `ghbdtn` instead of `hello`? Just tap **⌥ Alt** and RuSwitcher converts 
 - **Smart word detection** — converts the last typed word, including punctuation.
 - **Selected text** — select any text and tap Alt to convert it in place.
 - **Double Alt** — reverse conversion if you changed your mind.
-- **12 interface languages** — English, Русский, Українська, Беларуская, Deutsch, Français, Español, Português, Polski, 中文, 日本語, 한국어.
+- **16 interface languages** — English, Русский, Українська, Беларуская, Deutsch, Français, Español, Português, Polski, 中文, 日本語, 한국어, Ελληνικά, Български, Հայերեն, ქართული.
 - **Auto-start at login** — set and forget.
 - **Minimal footprint** — no Electron, no web views, pure Swift + AppKit.
 - **No telemetry** — your keystrokes stay on your Mac.
@@ -128,7 +128,7 @@ If you find RuSwitcher useful:
 - **Умное определение слова** — конвертирует последнее набранное слово, включая знаки препинания.
 - **Выделенный текст** — выделите любой текст и нажмите Alt для конвертации на месте.
 - **Повторный Alt** — обратная конвертация, если передумали.
-- **12 языков интерфейса** — English, Русский, Українська, Беларуская, Deutsch, Français, Español, Português, Polski, 中文, 日本語, 한국어.
+- **16 языков интерфейса** — English, Русский, Українська, Беларуская, Deutsch, Français, Español, Português, Polski, 中文, 日本語, 한국어, Ελληνικά, Български, Հայերեն, ქართული.
 - **Автозапуск при входе** — настроил и забыл.
 - **Минимальное потребление** — без Electron и веб-вьюх, чистый Swift + AppKit.
 - **Без телеметрии** — ваши нажатия остаются на вашем Mac.
