@@ -18,16 +18,29 @@ enum UpdateChecker {
     /// Проверить при запуске (с задержкой 5 сек, не чаще раза в сутки).
     /// Отключается через настройку `checkUpdatesEnabled`. Ручная проверка (`checkNow`) работает всегда.
     static func checkOnLaunch() {
-        let settings = SettingsManager.shared
-        guard settings.checkUpdatesEnabled else { return }
-        if let lastCheck = settings.lastUpdateCheck,
-           Date().timeIntervalSince(lastCheck) < 86400 {
-            return // Проверяли менее суток назад
-        }
-
+        guard shouldAutoCheck() else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
             Task { await check(silent: true) }
         }
+    }
+
+    /// Периодическая тихая авто-проверка, пока приложение работает (из таймера AppDelegate).
+    /// Тот же троттл (не чаще раза в сутки) и та же настройка `checkUpdatesEnabled`, что и на старте,
+    /// поэтому долго-живущий инстанс тоже ловит новые версии, а не только при перезапуске.
+    static func checkPeriodic() {
+        guard shouldAutoCheck() else { return }
+        Task { await check(silent: true) }
+    }
+
+    /// Можно ли сейчас авто-проверять: включено в настройках И прошло ≥24ч с последней проверки.
+    private static func shouldAutoCheck() -> Bool {
+        let settings = SettingsManager.shared
+        guard settings.checkUpdatesEnabled else { return false }
+        if let lastCheck = settings.lastUpdateCheck,
+           Date().timeIntervalSince(lastCheck) < 86400 {
+            return false // Проверяли менее суток назад
+        }
+        return true
     }
 
     /// Проверить вручную (всегда показывает результат)

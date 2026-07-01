@@ -113,6 +113,11 @@ final class KeyboardMonitor: @unchecked Sendable {
     private var onAltReconvert: (() -> Void)?
     /// Авто-конвертация: вызывается (async) на границе слова, когда включён autoConvert.
     var onWordBoundary: (() -> Void)?
+    /// issue #10: любой ввод/клик пользователя — чтобы спрятать флаг у каретки во время печати.
+    var onUserInput: (() -> Void)?
+    /// issue #10: включена ли фича флага-у-каретки. Гейтит диспатч onUserInput на горячем пути,
+    /// чтобы при выключенной фиче (по умолчанию) не будить main-очередь на каждом нажатии.
+    var caretFlagEnabled = false
 
     // Конфиг триггера (кэш; обновляется в start/reconfigure)
     private var triggerConfig = TriggerConfig.current()
@@ -229,6 +234,7 @@ final class KeyboardMonitor: @unchecked Sendable {
         triggerArmed = false
         lastTapTime = nil
         keysTypedSinceConversion = true
+        if caretFlagEnabled { DispatchQueue.main.async { [weak self] in self?.onUserInput?() } }   // issue #10: клик прячет флаг у каретки
         fullReset()
     }
 
@@ -238,6 +244,7 @@ final class KeyboardMonitor: @unchecked Sendable {
         triggerArmed = false
         lastTapTime = nil
         keysTypedSinceConversion = true
+        if caretFlagEnabled { DispatchQueue.main.async { [weak self] in self?.onUserInput?() } }   // issue #10: спрятать флаг при печати
 
         // Удалёнка: Screen Sharing шлёт проброшенные символы как keyCode 0 + юникод. Перехватываем
         // ТОЛЬКО в режиме удалённого стола. КРИТИЧНО: локально keyCode 0 — это обычная клавиша

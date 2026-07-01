@@ -9,6 +9,7 @@ final class SettingsWindowController {
     private var launchAtLoginCheckbox: NSButton?
     private var checkUpdatesCheckbox: NSButton?
     private var debugLogCheckbox: NSButton?
+    private var caretFlagCheckbox: NSButton?
     private var layout1Popup: NSPopUpButton?
     private var layout2Popup: NSPopUpButton?
     private var languagePopup: NSPopUpButton?
@@ -21,6 +22,7 @@ final class SettingsWindowController {
     var onTriggerChanged: (() -> Void)?
     var onAutoConvertChanged: ((Bool) -> Void)?
     var onRemoteDesktopChanged: ((Bool) -> Void)?
+    var onCaretFlagChanged: ((Bool) -> Void)?
 
     func showWindow() {
         if let window {
@@ -57,6 +59,11 @@ final class SettingsWindowController {
     /// Обновить состояние чекбокса автопереключения извне
     func updateAutoSwitchState(_ enabled: Bool) {
         autoSwitchCheckbox?.state = enabled ? .on : .off
+    }
+
+    /// Обновить чекбокс «флаг у курсора» извне (когда переключили из меню)
+    func updateCaretFlagState(_ enabled: Bool) {
+        caretFlagCheckbox?.state = enabled ? .on : .off
     }
 
     // MARK: - General Tab
@@ -210,6 +217,19 @@ final class SettingsWindowController {
         acHint.font = .systemFont(ofSize: 11); acHint.textColor = .secondaryLabelColor
         view.addSubview(acHint)
         y -= 38
+
+        // Флаг у курсора (issue #10)
+        let caretFlag = NSButton(checkboxWithTitle: L10n.settingsCaretFlag, target: self, action: #selector(caretFlagChanged))
+        caretFlag.frame = NSRect(x: 20, y: y - 22, width: 420, height: 22)
+        caretFlag.state = SettingsManager.shared.caretFlag ? .on : .off
+        view.addSubview(caretFlag)
+        caretFlagCheckbox = caretFlag
+        y -= 24
+        let cfHint = NSTextField(wrappingLabelWithString: L10n.settingsCaretFlagHint)
+        cfHint.frame = NSRect(x: 40, y: y - 44, width: 400, height: 44)
+        cfHint.font = .systemFont(ofSize: 11); cfHint.textColor = .secondaryLabelColor
+        view.addSubview(cfHint)
+        y -= 52
 
         // Режим удалённого стола отложен в 2.5 — блок скрыт за флагом (для тестирования).
         if SettingsManager.shared.showRemoteDesktopBeta {
@@ -510,6 +530,12 @@ final class SettingsWindowController {
         let enabled = sender.state == .on
         SettingsManager.shared.remoteDesktopMode = enabled
         onRemoteDesktopChanged?(enabled)
+    }
+
+    @objc private func caretFlagChanged(_ sender: NSButton) {
+        let enabled = sender.state == .on
+        SettingsManager.shared.caretFlag = enabled
+        onCaretFlagChanged?(enabled)
     }
 
     @objc private func debugLogChanged(_ sender: NSButton) {

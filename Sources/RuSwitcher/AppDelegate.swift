@@ -10,7 +10,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let perAppLayoutManager = PerAppLayoutManager()
     private var permissionCheckTimer: Timer?
     private var iconRefreshTimer: Timer?
+    private var updateCheckTimer: Timer?   // периодическая авто-проверка обновлений, пока приложение работает
     private var monitoringActive = false
+    private var caretIndicator: CaretIndicator?   // issue #10: флаг у каретки (бета, по умолчанию OFF)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
@@ -18,6 +20,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         syncLoginItem()
         runPermissionWizard()
         UpdateChecker.checkOnLaunch()
+        // Периодическая авто-проверка обновлений, пока приложение работает (не только на старте).
+        // Тикает каждые 6ч; сам запрос к GitHub не чаще раза в сутки (троттл в UpdateChecker) и
+        // уважает настройку «Автоматически проверять обновления» (её можно снять, чтобы отключить).
+        updateCheckTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { _ in
+            Task { @MainActor in UpdateChecker.checkPeriodic() }
+        }
     }
 
     private func setupSettingsCallbacks() {
@@ -47,6 +55,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsController.onRemoteDesktopChanged = { [weak self] _ in
             self?.reconfigureTap()  // уровень tap зависит от режима
             self?.rebuildMenu()
+        }
+        settingsController.onCaretFlagChanged = { [weak self] _ in
+            self?.rebuildMenu()          // синхронизировать галочку в меню
+            self?.syncCaretIndicator()   // создать/снести индикатор + обновить гейт onUserInput
         }
     }
 
@@ -302,7 +314,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keyboardMonitor.onWordBoundary = { [weak self] in
             self?.handleAutoConvert()
         }
-        updateStatusIcon()
+        keyboardMonitor.onUserInput = { [weak self] in self?.caretIndicator?.userTyped() }  // issue #10
+        updateStatusIcon()        // сначала выставляем флаг меню-бара, пока индикатора ещё нет
+        syncCaretIndicator()      // затем создаём индикатор — без стартового ложного «попа»
         // Страховка к issue #9: системное уведомление о смене раскладки ненадёжно
         // (особенно через удалённый стол — на той машине оно часто не доходит), поэтому
         // флаг «застревает». Постоянный лёгкий опрос держит иконку в синхроне с системой.
@@ -476,6 +490,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keySoundItem.state = SettingsManager.shared.keySound ? .on : .off
         menu.addItem(keySoundItem)
 
+        let caretFlagItem = NSMenuItem(title: L10n.menuCaretFlag, action: #selector(toggleCaretFlag), keyEquivalent: "")
+        caretFlagItem.target = self
+        caretFlagItem.state = SettingsManager.shared.caretFlag ? .on : .off
+        menu.addItem(caretFlagItem)
+
         // Режим удалённого стола отложен в 2.5 — тумблер скрыт за флагом (для тестирования).
         if SettingsManager.shared.showRemoteDesktopBeta {
             let remoteDesktopItem = NSMenuItem(title: L10n.menuRemoteDesktop, action: #selector(toggleRemoteDesktop), keyEquivalent: "")
@@ -519,12 +538,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func updateStatusIcon() {
-        statusItem.button?.title = flagForCurrentLayout()
+        let flag = flagForCurrentLayout()
+        // Каретку дёргаем ТОЛЬКО при реальной смене флага: updateStatusIcon зовётся ещё и
+        // 2-секундным опросом-страховкой, иначе флаг у каретки выскакивал бы каждые 2с.
+        let changed = statusItem.button?.title != flag
+        statusItem.button?.title = flag
+        if changed { caretIndicator?.layoutChanged() }
     }
 
     /// Флаг текущей раскладки по коду языка (BCP-47), а не по подстроке в ID — иначе
     /// "Belarusian" ложно матчил "ru", а любая не-RU/EN пара показывалась как 🇺🇸.
-    private func flagForCurrentLayout() -> String {
+    func flagForCurrentLayout() -> String {
         guard let lang = LayoutSwitcher.currentLanguageCode()?.lowercased(), !lang.isEmpty else {
             // Язык раскладки недоступен — мягкий фолбэк по ID.
             let id = LayoutSwitcher.currentLayoutID().lowercased()
@@ -537,6 +561,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "pt": "🇵🇹", "pl": "🇵🇱", "ja": "🇯🇵", "zh": "🇨🇳", "ko": "🇰🇷",
         ]
         return flags[code] ?? code.uppercased()
+    }
+
+    /// issue #10: создаёт/освобождает индикатор каретки по флагу настроек. Создаётся лениво,
+    /// только когда фича включена И мониторинг запущен (нужны разрешения).
+    private func syncCaretIndicator() {
+        keyboardMonitor.caretFlagEnabled = SettingsManager.shared.caretFlag   // гейт диспатча onUserInput
+        if SettingsManager.shared.caretFlag, monitoringActive {
+            if caretIndicator == nil {
+                let ci = CaretIndicator()
+                ci.flagProvider = { [weak self] in self?.flagForCurrentLayout() ?? "" }
+                caretIndicator = ci
+            }
+        } else {
+            caretIndicator?.teardown()
+            caretIndicator = nil
+        }
     }
 
     // MARK: - Actions
@@ -556,6 +596,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleKeySound(_ sender: NSMenuItem) {
         SettingsManager.shared.keySound.toggle()
         sender.state = SettingsManager.shared.keySound ? .on : .off
+    }
+
+    @objc private func toggleCaretFlag(_ sender: NSMenuItem) {
+        SettingsManager.shared.caretFlag.toggle()
+        sender.state = SettingsManager.shared.caretFlag ? .on : .off
+        settingsController.updateCaretFlagState(SettingsManager.shared.caretFlag)
+        syncCaretIndicator()   // создать/снести индикатор и обновить гейт onUserInput
     }
 
     @objc private func toggleRemoteDesktop(_ sender: NSMenuItem) {

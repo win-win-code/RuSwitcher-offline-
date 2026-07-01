@@ -29,6 +29,7 @@ final class SettingsManager: @unchecked Sendable {
         static let showRemoteDesktopBeta = "com.ruswitcher.showRemoteDesktopBeta"
         static let autoConvertOffered = "com.ruswitcher.autoConvertOffered"
         static let keySound = "com.ruswitcher.keySound"
+        static let caretFlag = "com.ruswitcher.caretFlag"
         static let deniedAppsAdded = "com.ruswitcher.deniedAppsAdded"
         static let deniedAppsRemoved = "com.ruswitcher.deniedAppsRemoved"
         static let deniedWords = "com.ruswitcher.deniedWords"
@@ -144,6 +145,12 @@ final class SettingsManager: @unchecked Sendable {
     var autoConvert: Bool {
         get { defaults.bool(forKey: Keys.autoConvert) }
         set { defaults.set(newValue, forKey: Keys.autoConvert) }
+    }
+
+    /// issue #10: показывать флаг раскладки у текстовой каретки (бета). По умолчанию ВЫКЛ.
+    var caretFlag: Bool {
+        get { defaults.bool(forKey: Keys.caretFlag) }
+        set { defaults.set(newValue, forKey: Keys.caretFlag) }
     }
 
     /// Режим работы через удалённый рабочий стол (Apple Screen Sharing и т.п.).
