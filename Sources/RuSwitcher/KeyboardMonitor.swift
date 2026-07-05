@@ -251,6 +251,12 @@ final class KeyboardMonitor: @unchecked Sendable {
         // 'a' (и 'ф' в ЙЦУКЕН), её нельзя глотать, иначе ломается локальная конверсия слов с
         // этими буквами. В локальном режиме сюда не заходим — буква идёт обычным путём ниже.
         if SettingsManager.shared.remoteDesktopMode, keyCode == 0 {
+            // ⌘A/⌘C/⌘X и т.п. по удалёнке прилетают как символ 'a' (keyCode 0) с флагом Cmd.
+            // НЕ копим их в буфер: иначе ⌘A добавляет лишнюю «ф» (keyCode 0 = 'ф' в ЙЦУКЕН)
+            // и рушит выделение. Сбрасываем буфер — триггер уйдёт по clipboard-пути (выделение).
+            // Локальный аналог этого guard — ниже, на ветке модификаторов (PR #13).
+            let modifiers = flags.intersection([.maskCommand, .maskControl, .maskAlternate])
+            if !modifiers.isEmpty { fullReset(); return }
             if let ch = char { handleForwardedChar(ch) }
             return
         }
