@@ -85,6 +85,8 @@ enum L10n {
     static var updateCheckFailedDetail: String { s("update.checkFailedDetail") }
     static var updateInstallFailed: String { s("update.installFailed") }
     static var updateVerifyFailed: String { s("update.verifyFailed") }
+    static var updateDownloadCorrupted: String { s("update.downloadCorrupted") }
+    static var updateIntegrityFailed: String { s("update.integrityFailed") }
     static var updateDownloadFailed: String { s("update.downloadFailed") }
 
     // MARK: - Language names (для выпадающего списка)
@@ -225,6 +227,8 @@ enum L10n {
             "update.checkFailedDetail": "Could not connect to the update server. Please check your internet connection.",
             "update.installFailed": "Installation Failed",
             "update.verifyFailed": "Download verification failed. The file may be corrupted.",
+            "update.downloadCorrupted": "The downloaded file is corrupted — the network may have interrupted or altered the download. Try downloading in your browser.",
+            "update.integrityFailed": "Update authenticity check failed. Installation cancelled.",
             "update.downloadFailed": "Could not download the update. Please check your internet connection.",
         ],
 
@@ -314,6 +318,8 @@ enum L10n {
             "update.checkFailedDetail": "Не удалось подключиться к серверу обновлений.",
             "update.installFailed": "Ошибка установки",
             "update.verifyFailed": "Проверка загруженного файла не пройдена. Файл может быть повреждён.",
+            "update.downloadCorrupted": "Загруженный файл повреждён — сеть могла оборвать или исказить загрузку. Попробуйте скачать в браузере.",
+            "update.integrityFailed": "Проверка подлинности обновления не пройдена. Установка отменена.",
             "update.downloadFailed": "Не удалось скачать обновление. Проверьте подключение к интернету.",
         ],
 
@@ -398,6 +404,8 @@ enum L10n {
             "update.checkFailedDetail": "Verbindung zum Update-Server nicht möglich.",
             "update.installFailed": "Installation fehlgeschlagen",
             "update.verifyFailed": "Download-Überprüfung fehlgeschlagen. Die Datei könnte beschädigt sein.",
+            "update.downloadCorrupted": "Die heruntergeladene Datei ist beschädigt — das Netzwerk hat den Download möglicherweise unterbrochen oder verändert. Versuchen Sie den Download im Browser.",
+            "update.integrityFailed": "Echtheitsprüfung des Updates fehlgeschlagen. Installation abgebrochen.",
             "update.downloadFailed": "Update konnte nicht heruntergeladen werden.",
             "wizard.permissionsOk.title": "Alle Berechtigungen erteilt",
             "wizard.permissionsOk.text": "Bedienungshilfen und Eingabeüberwachung sind aktiviert. RuSwitcher funktioniert.",
@@ -484,6 +492,8 @@ enum L10n {
             "update.checkFailedDetail": "Impossible de se connecter au serveur de mise à jour.",
             "update.installFailed": "Échec de l'installation",
             "update.verifyFailed": "La vérification du téléchargement a échoué. Le fichier est peut-être corrompu.",
+            "update.downloadCorrupted": "Le fichier téléchargé est corrompu — le réseau a peut-être interrompu ou altéré le téléchargement. Essayez de le télécharger dans votre navigateur.",
+            "update.integrityFailed": "Échec de la vérification d'authenticité de la mise à jour. Installation annulée.",
             "update.downloadFailed": "Impossible de télécharger la mise à jour.",
             "wizard.permissionsOk.title": "Toutes les autorisations sont accordées",
             "wizard.permissionsOk.text": "L’Accessibilité et la Surveillance de la saisie sont activées. RuSwitcher fonctionne.",
@@ -570,6 +580,8 @@ enum L10n {
             "update.checkFailedDetail": "No se pudo conectar al servidor de actualizaciones.",
             "update.installFailed": "Error de instalación",
             "update.verifyFailed": "La verificación de la descarga falló. El archivo puede estar dañado.",
+            "update.downloadCorrupted": "El archivo descargado está dañado: la red pudo interrumpir o alterar la descarga. Pruebe a descargarlo en el navegador.",
+            "update.integrityFailed": "Falló la verificación de autenticidad de la actualización. Instalación cancelada.",
             "update.downloadFailed": "No se pudo descargar la actualización.",
             "wizard.permissionsOk.title": "Todos los permisos concedidos",
             "wizard.permissionsOk.text": "Accesibilidad y Monitorización de entrada están activados. RuSwitcher funciona.",
@@ -658,6 +670,8 @@ enum L10n {
             "update.checkFailedDetail": "Não foi possível conectar ao servidor de atualização. Verifique sua conexão com a internet.",
             "update.installFailed": "Falha na instalação",
             "update.verifyFailed": "Falha na verificação do download. O arquivo pode estar corrompido.",
+            "update.downloadCorrupted": "O arquivo baixado está corrompido — a rede pode ter interrompido ou alterado o download. Tente baixar no navegador.",
+            "update.integrityFailed": "Falha na verificação de autenticidade da atualização. Instalação cancelada.",
             "update.downloadFailed": "Não foi possível baixar a atualização. Verifique sua conexão com a internet.",
         ],
 
@@ -744,6 +758,8 @@ enum L10n {
             "update.checkFailedDetail": "无法连接到更新服务器。请检查你的网络连接。",
             "update.installFailed": "安装失败",
             "update.verifyFailed": "下载校验失败。文件可能已损坏。",
+            "update.downloadCorrupted": "下载的文件已损坏——网络可能中断或篡改了下载。请尝试在浏览器中下载。",
+            "update.integrityFailed": "更新真实性验证失败。安装已取消。",
             "update.downloadFailed": "无法下载更新。请检查你的网络连接。",
         ],
 
@@ -830,6 +846,8 @@ enum L10n {
             "update.checkFailedDetail": "アップデートサーバーに接続できませんでした。インターネット接続を確認してください。",
             "update.installFailed": "インストールに失敗しました",
             "update.verifyFailed": "ダウンロードの検証に失敗しました。ファイルが破損している可能性があります。",
+            "update.downloadCorrupted": "ダウンロードしたファイルが破損しています。ネットワークが中断・改変した可能性があります。ブラウザでのダウンロードをお試しください。",
+            "update.integrityFailed": "アップデートの真正性検証に失敗しました。インストールを中止しました。",
             "update.downloadFailed": "アップデートをダウンロードできませんでした。インターネット接続を確認してください。",
         ],
 
@@ -916,6 +934,8 @@ enum L10n {
             "update.checkFailedDetail": "업데이트 서버에 연결할 수 없습니다. 인터넷 연결을 확인하세요.",
             "update.installFailed": "설치 실패",
             "update.verifyFailed": "다운로드 검증에 실패했습니다. 파일이 손상되었을 수 있습니다.",
+            "update.downloadCorrupted": "다운로드한 파일이 손상되었습니다. 네트워크가 다운로드를 중단하거나 변경했을 수 있습니다. 브라우저에서 다운로드해 보세요.",
+            "update.integrityFailed": "업데이트 정품 확인에 실패했습니다. 설치가 취소되었습니다.",
             "update.downloadFailed": "업데이트를 다운로드할 수 없습니다. 인터넷 연결을 확인하세요.",
         ],
 
@@ -1003,6 +1023,8 @@ enum L10n {
             "update.checkFailedDetail": "Не вдалося з'єднатися з сервером оновлень.",
             "update.installFailed": "Помилка встановлення",
             "update.verifyFailed": "Перевірка завантаженого файлу не пройдена. Файл може бути пошкоджений.",
+            "update.downloadCorrupted": "Завантажений файл пошкоджено — мережа могла обірвати або спотворити завантаження. Спробуйте завантажити у браузері.",
+            "update.integrityFailed": "Перевірку справжності оновлення не пройдено. Встановлення скасовано.",
             "update.downloadFailed": "Не вдалося завантажити оновлення.",
             "wizard.permissionsOk.title": "Усі дозволи надано",
             "wizard.permissionsOk.text": "«Доступність» та «Моніторинг вводу» увімкнено. RuSwitcher працює.",
@@ -1092,6 +1114,8 @@ enum L10n {
             "update.checkFailedDetail": "Не ўдалося злучыцца з серверам абнаўленняў.",
             "update.installFailed": "Памылка ўсталявання",
             "update.verifyFailed": "Праверка спампаванага файла не прайшла. Файл можа быць пашкоджаны.",
+            "update.downloadCorrupted": "Спампаваны файл пашкоджаны — сетка магла абарваць або сказіць спампоўку. Паспрабуйце спампаваць у браўзеры.",
+            "update.integrityFailed": "Праверка сапраўднасці абнаўлення не пройдзена. Усталяванне скасавана.",
             "update.downloadFailed": "Не ўдалося спампаваць абнаўленне.",
             "wizard.permissionsOk.title": "Усе дазволы дадзены",
             "wizard.permissionsOk.text": "«Спецыяльныя магчымасці» і «Маніторынг уводу» уключаны. RuSwitcher працуе.",
@@ -1180,6 +1204,8 @@ enum L10n {
             "update.checkFailedDetail": "Nie można połączyć się z serwerem aktualizacji. Sprawdź połączenie z internetem.",
             "update.installFailed": "Instalacja nie powiodła się",
             "update.verifyFailed": "Weryfikacja pobierania nie powiodła się. Plik może być uszkodzony.",
+            "update.downloadCorrupted": "Pobrany plik jest uszkodzony — sieć mogła przerwać lub zmienić pobieranie. Spróbuj pobrać w przeglądarce.",
+            "update.integrityFailed": "Weryfikacja autentyczności aktualizacji nie powiodła się. Instalacja anulowana.",
             "update.downloadFailed": "Nie można pobrać aktualizacji. Sprawdź połączenie z internetem.",
         ],
         "el": [
@@ -1264,6 +1290,8 @@ enum L10n {
             "update.checkFailedDetail": "Δεν ήταν δυνατή η σύνδεση με τον διακομιστή ενημερώσεων. Ελέγξτε τη σύνδεσή σας στο διαδίκτυο.",
             "update.installFailed": "Η εγκατάσταση απέτυχε",
             "update.verifyFailed": "Η επαλήθευση λήψης απέτυχε. Το αρχείο μπορεί να είναι κατεστραμμένο.",
+            "update.downloadCorrupted": "Το ληφθέν αρχείο είναι κατεστραμμένο — το δίκτυο ίσως διέκοψε ή αλλοίωσε τη λήψη. Δοκιμάστε λήψη μέσω του προγράμματος περιήγησης.",
+            "update.integrityFailed": "Η επαλήθευση γνησιότητας της ενημέρωσης απέτυχε. Η εγκατάσταση ακυρώθηκε.",
             "update.downloadFailed": "Δεν ήταν δυνατή η λήψη της ενημέρωσης. Ελέγξτε τη σύνδεσή σας στο διαδίκτυο.",
         ],
         "bg": [
@@ -1348,6 +1376,8 @@ enum L10n {
             "update.checkFailedDetail": "Неуспешно свързване със сървъра за актуализации. Проверете интернет връзката си.",
             "update.installFailed": "Инсталацията неуспешна",
             "update.verifyFailed": "Проверката на изтеглянето неуспешна. Файлът може да е повреден.",
+            "update.downloadCorrupted": "Изтегленият файл е повреден — мрежата може да е прекъснала или променила изтеглянето. Опитайте да изтеглите в браузъра.",
+            "update.integrityFailed": "Проверката за автентичност на актуализацията е неуспешна. Инсталацията е отменена.",
             "update.downloadFailed": "Неуспешно изтегляне на актуализацията. Проверете интернет връзката си.",
         ],
         "hy": [
@@ -1432,6 +1462,8 @@ enum L10n {
             "update.checkFailedDetail": "Չհաջողվեց միանալ թարմացման սերվերին: Ստուգեք ձեր ինտերնետ կապը.",
             "update.installFailed": "Տեղադրումը ձախողվեց",
             "update.verifyFailed": "Ներբեռնման ստուգումը ձախողվեց: Ֆայլը կարող է վնասված լինել.",
+            "update.downloadCorrupted": "Ներբեռնված ֆայլը վնասված է. ցանցը հնարավոր է ընդհատել կամ աղավաղել է ներբեռնումը: Փորձեք ներբեռնել դիտարկիչով:",
+            "update.integrityFailed": "Թարմացման իսկության ստուգումը ձախողվեց: Տեղադրումը չեղարկվել է:",
             "update.downloadFailed": "Չհաջողվեց ներբեռնել թարմացումը: Ստուգեք ձեր ինտերնետ կապը.",
         ],
         "ka": [
@@ -1516,6 +1548,8 @@ enum L10n {
             "update.checkFailedDetail": "ვერ მოხერხდა განახლების სერვერთან დაკავშირება. შეამოწმეთ ინტერნეტ კავშირი.",
             "update.installFailed": "დაყენება ვერ მოხერხდა",
             "update.verifyFailed": "ჩამოტვირთვის შემოწმება ვერ მოხერხდა. ფაილი შეიძლება დაზიანებული იყოს.",
+            "update.downloadCorrupted": "გადმოწერილი ფაილი დაზიანებულია — ქსელმა შესაძლოა შეწყვიტა ან შეცვალა გადმოწერა. სცადეთ ბრაუზერით გადმოწერა.",
+            "update.integrityFailed": "განახლების ავთენტურობის შემოწმება ვერ მოხერხდა. ინსტალაცია გაუქმდა.",
             "update.downloadFailed": "განახლების ჩამოტვირთვა ვერ მოხერხდა. შეამოწმეთ ინტერნეტ კავშირი.",
         ],
     ]

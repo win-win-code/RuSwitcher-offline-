@@ -108,7 +108,9 @@ enum UpdateChecker {
         // 0. Версия приходит из сети — не доверяем вслепую (попадёт в URL и в сравнение).
         guard version.range(of: "^[0-9]+(\\.[0-9]+){1,3}$", options: .regularExpression) != nil else {
             rslog("Update: rejected malformed version '\(version)'")
-            await showInstallError(L10n.updateVerifyFailed)
+            // Семантически это недоверие данным фида, а не «повреждённый файл»:
+            // на этом этапе ничего ещё не скачивалось.
+            await showInstallError(L10n.updateIntegrityFailed)
             return
         }
 
@@ -117,7 +119,10 @@ enum UpdateChecker {
         //     в браузере, где работает Gatekeeper/нотаризация.
         guard let expectedSHA = info.sha256, !expectedSHA.isEmpty else {
             rslog("Update: no sha256 in version.json — falling back to browser download")
-            if let url = URL(string: info.url) { NSWorkspace.shared.open(url) }
+            // URL строим локально, а не из фида: фиду установщик не доверяет нигде.
+            if let url = URL(string: "\(SettingsManager.githubURL)/releases/latest") {
+                NSWorkspace.shared.open(url)
+            }
             return
         }
 
@@ -126,7 +131,9 @@ enum UpdateChecker {
             return
         }
 
-        let tmpPath = "/tmp/RuSwitcher-update.dmg"
+        // Приватная temp-директория пользователя вместо общего /tmp (аудит: предсказуемый
+        // путь в shared /tmp — окно для symlink-подмены между проверкой и установкой).
+        let tmpPath = NSTemporaryDirectory() + "RuSwitcher-update.dmg"
         let tmpURL = URL(fileURLWithPath: tmpPath)
 
         // 1. Скачать
@@ -144,18 +151,31 @@ enum UpdateChecker {
             return
         }
 
+        // Скачанный образ убираем на ЛЮБОМ выходе с ошибкой ниже (раньше ветки отказа
+        // mount выходили до регистрации уборки и DMG протекал на диск). Путь успеха
+        // до defer не доживает (terminate) — там уборка явная, перед relaunch.
+        defer { try? FileManager.default.removeItem(at: tmpURL) }
+
         // 2. Проверить sha256 (обязательно)
         let actualSHA = sha256OfFile(at: tmpPath)
         guard actualSHA == expectedSHA else {
             rslog("Update: sha256 mismatch expected=\(expectedSHA) actual=\(actualSHA ?? "nil")")
             try? FileManager.default.removeItem(at: tmpURL)
-            await showInstallError(L10n.updateVerifyFailed)
+            // Битая загрузка — НЕ «проверка не пройдена» вообще: у части пользователей сеть
+            // режет/искажает скачивание с CDN GitHub (assets-хост блокируется отдельно от
+            // raw.githubusercontent). Говорим прямо и предлагаем браузер.
+            await showDownloadCorruptedAlert()
             return
         }
         rslog("Update: sha256 verified")
 
-        // 3. Смонтировать DMG
-        let mountPoint = "/tmp/RuSwitcher-update-mount"
+        // Наследие ≤2.6.1: путь успеха не размонтировал том (terminate съедал defer),
+        // и он висел по фиксированному пути до перезагрузки. Прибираем тихо.
+        detachUpdateVolume(at: "/tmp/RuSwitcher-update-mount")
+
+        // 3. Смонтировать DMG (уникальный mountpoint: не пересекается с прошлой попыткой
+        //    и не предсказуем заранее — в пару к приватному пути загрузки выше)
+        let mountPoint = NSTemporaryDirectory() + "RuSwitcher-update-mount-\(UUID().uuidString.prefix(8))"
         let mount = Process()
         mount.launchPath = "/usr/bin/hdiutil"
         mount.arguments = ["attach", tmpPath, "-nobrowse", "-readonly", "-mountpoint", mountPoint]
@@ -175,17 +195,7 @@ enum UpdateChecker {
             return
         }
 
-        defer {
-            // Размонтировать и почистить
-            let detach = Process()
-            detach.launchPath = "/usr/bin/hdiutil"
-            detach.arguments = ["detach", mountPoint, "-quiet"]
-            detach.standardOutput = FileHandle.nullDevice
-            detach.standardError = FileHandle.nullDevice
-            try? detach.run()
-            detach.waitUntilExit()
-            try? FileManager.default.removeItem(at: tmpURL)
-        }
+        defer { detachUpdateVolume(at: mountPoint) }   // ветки ошибок; успех чистится явно
 
         // 4. Найти .app в смонтированном томе
         let fm = FileManager.default
@@ -204,22 +214,29 @@ enum UpdateChecker {
         //    спасает только пиннинг Developer ID нашей команды.
         guard verifyNotarizedSignature(at: sourceApp.path) else {
             rslog("Update: signature/notarization check FAILED — aborting")
-            await showInstallError(L10n.updateVerifyFailed)
+            await showInstallError(L10n.updateIntegrityFailed)
             return
         }
 
         // 5a. Идентичность бандла: тот же bundle id и версия совпадает с заявленной.
-        let mountedInfo = Bundle(url: sourceApp)?.infoDictionary
+        //     Info.plist читаем напрямую с диска: Bundle(url:) кэширует инстансы по пути
+        //     на всю жизнь процесса — у долгоживущего menu-bar приложения повторная
+        //     попытка обновления получила бы данные ПРОШЛОГО смонтированного образа
+        //     и упала бы с ложным «версия не совпала».
+        let plistURL = sourceApp.appendingPathComponent("Contents/Info.plist")
+        let mountedInfo = (try? Data(contentsOf: plistURL)).flatMap {
+            try? PropertyListSerialization.propertyList(from: $0, options: [], format: nil) as? [String: Any]
+        }
         let mountedID = mountedInfo?["CFBundleIdentifier"] as? String
         let mountedVersion = mountedInfo?["CFBundleShortVersionString"] as? String
         guard mountedID == Bundle.main.bundleIdentifier else {
             rslog("Update: bundle id mismatch (\(mountedID ?? "nil"))")
-            await showInstallError(L10n.updateVerifyFailed)
+            await showInstallError(L10n.updateIntegrityFailed)
             return
         }
         guard mountedVersion == version else {
             rslog("Update: bundle version mismatch — announced \(version), contains \(mountedVersion ?? "nil")")
-            await showInstallError(L10n.updateVerifyFailed)
+            await showInstallError(L10n.updateIntegrityFailed)
             return
         }
 
@@ -250,9 +267,30 @@ enum UpdateChecker {
             return
         }
 
-        // 8. Перезапуск
+        // 8. Явная уборка ПЕРЕД перезапуском: relaunch завершает процесс через
+        //    terminate() → exit(), поэтому defer-блоки НЕ выполняются. Без этого том
+        //    оставался смонтированным до перезагрузки, а следующая попытка обновления
+        //    перезаписывала backing-файл занятого образа и падала на «Resource busy»
+        //    (ревью-находка, воспроизведена).
+        try? fm.removeItem(at: stagingDir)
+        detachUpdateVolume(at: mountPoint)
+        try? fm.removeItem(at: tmpURL)
+
+        // 9. Перезапуск
         rslog("Update: restarting...")
         AppRelauncher.relaunch(bundlePath: currentApp.path)
+    }
+
+    /// Тихо размонтирует том обновления. Вынесено из defer, потому что путь успеха
+    /// завершает процесс до раскрутки стека — defer там не срабатывает.
+    private static func detachUpdateVolume(at mountPoint: String) {
+        let detach = Process()
+        detach.launchPath = "/usr/bin/hdiutil"
+        detach.arguments = ["detach", mountPoint, "-quiet"]
+        detach.standardOutput = FileHandle.nullDevice
+        detach.standardError = FileHandle.nullDevice
+        try? detach.run()
+        detach.waitUntilExit()
     }
 
     /// Проверяет, что бандл подписан Developer ID нашей команды и проходит строгую
@@ -303,6 +341,24 @@ enum UpdateChecker {
 
     private static func showInstallError(_ message: String) async {
         showAlert(style: .warning, title: L10n.updateInstallFailed, message: message)
+    }
+
+    /// Битая загрузка (sha256 не совпал): файл не тот, что публиковали. Чаще всего это
+    /// сеть (обрыв/подмена на пути к CDN GitHub) — предлагаем скачать в браузере, там
+    /// видна реальная сетевая ошибка, работают ретраи и Gatekeeper проверит DMG сам.
+    private static func showDownloadCorruptedAlert() async {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = L10n.updateInstallFailed
+        alert.informativeText = L10n.updateDownloadCorrupted
+        alert.addButton(withTitle: L10n.updateDownload)   // «Скачать» → страница релиза в браузере
+        alert.addButton(withTitle: L10n.updateLater)
+        // URL строим локально из константы, а НЕ из info.url: фид приходит по сети,
+        // и остальной установщик ему сознательно не доверяет (ревью-находка).
+        if alert.runModal() == .alertFirstButtonReturn,
+           let url = URL(string: "\(SettingsManager.githubURL)/releases/latest") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     private static func showUpToDateAlert() async {
