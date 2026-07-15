@@ -72,8 +72,15 @@ cp "$PROJECT_DIR/RuSwitcher.icns" "$APP_BUNDLE/Contents/Resources/RuSwitcher.icn
 # 6. Создаём PkgInfo
 echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
 
-# 7. По умолчанию используем локальную ad-hoc подпись. Для релизной подписи передайте
-#    SIGN_ID="Developer ID Application: ..." явно в окружении.
+# 7. Для локальных сборок берём стабильную code-signing identity из Keychain.
+#    Ad-hoc requirement равен cdhash бинаря и меняется при каждой пересборке,
+#    из-за чего macOS сбрасывает Accessibility/Input Monitoring. Явный
+#    SIGN_ID имеет приоритет; SIGN_ID=- по-прежнему форсирует ad-hoc.
+if [ -z "${SIGN_ID:-}" ]; then
+    SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null \
+        | sed -n 's/.*"\([^"]*\)".*/\1/p' \
+        | head -n 1)
+fi
 SIGN_ID="${SIGN_ID:--}"
 echo "→ Code signing with: $SIGN_ID"
 codesign --force --deep --sign "$SIGN_ID" \
