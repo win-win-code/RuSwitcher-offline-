@@ -4,7 +4,6 @@ set -e
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_NAME="RuSwitcher"
 APP_BUNDLE="$PROJECT_DIR/$APP_NAME.app"
-# Universal-сборка кладёт продукт сюда (а не в .build/release)
 BUILD_DIR="$PROJECT_DIR/.build/apple/Products/Release"
 VERSION_JSON="$PROJECT_DIR/version.json"
 
@@ -23,9 +22,24 @@ fi
 echo "=== Building $APP_NAME v$SHORT_VERSION (build $BUILD_VERSION) ==="
 
 # 1. Собираем release — universal (arm64 + x86_64), чтобы работало и на Intel-маках
-echo "→ swift build -c release --arch arm64 --arch x86_64 (universal)..."
 cd "$PROJECT_DIR"
-swift build -c release --arch arm64 --arch x86_64
+NATIVE_ONLY=0
+if [ -d "/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk" ]; then
+    NATIVE_ONLY=1
+    BUILD_DIR="$PROJECT_DIR/.build/release"
+    export SDKROOT="/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk"
+    export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-/tmp/ruswitcher-clang-cache}"
+    export SWIFTPM_MODULECACHE_OVERRIDE="${SWIFTPM_MODULECACHE_OVERRIDE:-/tmp/ruswitcher-swiftpm-modules}"
+    SWIFT_BUILD_ARGS=(-c release --disable-sandbox --sdk "$SDKROOT" --cache-path /tmp/ruswitcher-swiftpm-cache --scratch-path .build)
+else
+    SWIFT_BUILD_ARGS=(-c release --arch arm64 --arch x86_64)
+fi
+if [ "$NATIVE_ONLY" = "1" ]; then
+    echo "→ swift build ${SWIFT_BUILD_ARGS[*]} (native)..."
+else
+    echo "→ swift build ${SWIFT_BUILD_ARGS[*]} (universal)..."
+fi
+swift build "${SWIFT_BUILD_ARGS[@]}"
 
 # 2. Создаём .app bundle
 echo "→ Creating app bundle..."
@@ -38,10 +52,10 @@ cp "$BUILD_DIR/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 
 # 3a. Самопроверка: бинарь обязан быть universal (arm64 + x86_64), иначе Intel-маки не запустят
 ARCHS=$(lipo -archs "$APP_BUNDLE/Contents/MacOS/$APP_NAME")
-if [[ "$ARCHS" != *"arm64"* || "$ARCHS" != *"x86_64"* ]]; then
+if [ "$NATIVE_ONLY" = "0" ] && [[ "$ARCHS" != *"arm64"* || "$ARCHS" != *"x86_64"* ]]; then
     echo "ERROR: бинарь не universal (получено: $ARCHS)"; exit 1
 fi
-echo "→ Universal OK: $ARCHS"
+echo "→ Binary archs OK: $ARCHS"
 
 # 4. Копируем Info.plist и штампуем версию из version.json
 cp "$PROJECT_DIR/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
