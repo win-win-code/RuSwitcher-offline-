@@ -226,6 +226,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         AppRelauncher.relaunch()
     }
 
+    /// Одиночный триггер должен оставаться обычным переключателем раскладки,
+    /// когда в поле нет конвертируемого слова.
+    private func switchLayoutWithoutConversion() {
+        keyboardMonitor.clearSensitiveState()
+        textConverter.clearState()
+        LayoutSwitcher.switchToOpposite()
+        updateStatusIcon()
+    }
+
     // MARK: - Start Monitoring
 
     private func startMonitoring() {
@@ -253,8 +262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let prevKeys = self.keyboardMonitor.prevWordKeys
                 let bc = self.keyboardMonitor.boundaryCount
                 guard let target = self.keyboardMonitor.conversionTarget else {
-                    self.keyboardMonitor.clearSensitiveState()
-                    self.textConverter.clearState()
+                    self.switchLayoutWithoutConversion()
                     return
                 }
                 let scheduled = self.textConverter.convert(
