@@ -14,6 +14,7 @@ DMG_NAME="${APP_NAME}-${VERSION}.dmg"
 # Переопределение: NOTARIZE_PROFILE=<name>, NOTARY_CONF=<path>. Пропуск: SKIP_NOTARIZE=1.
 NOTARIZE_PROFILE="${NOTARIZE_PROFILE:-notarytool-studio}"
 NOTARY_CONF="${NOTARY_CONF:-$HOME/.config/ruswitcher/notary.conf}"
+SIGN_ID="${SIGN_ID:--}"
 if [ -f "$NOTARY_CONF" ]; then
     # shellcheck source=/dev/null
     . "$NOTARY_CONF"
@@ -34,18 +35,24 @@ DMG_SIZE="10m"
 
 echo "=== Creating styled DMG ==="
 
+# Фон генерируется из локального исходника при каждой упаковке, чтобы UI установщика
+# соответствовал текущей версии и не содержал устаревших внешних ссылок.
+swift "$SCRIPT_DIR/generate_dmg_background.swift" "$SCRIPT_DIR/$BACKGROUND"
+
 # 00. Fail fast: нотаризационный профиль проверяем ДО многоминутной сборки.
 #     Профиль уже ДВАЖДЫ пропадал из Keychain (2026-07: удалён на живой системе
 #     между релизами, без ребута/обновлений — подозрение на чистильщики/VPN-софт),
 #     и падение в середине пайплайна путает. Ловим сразу, с рецептом починки.
 if [ "${SKIP_NOTARIZE:-0}" != "1" ]; then
+    if [ "$SIGN_ID" = "-" ]; then
+        echo "ОШИБКА: для нотаризации задайте SIGN_ID с сертификатом Developer ID Application."
+        exit 69
+    fi
     if ! xcrun notarytool history "${NOTARY_ARGS[@]}" >/dev/null 2>&1; then
         echo "ОШИБКА: нотаризационные креды недоступны (пробовали: $NOTARY_VIA)."
         echo "Вариант 1 (надёжный): API-ключ App Store Connect в $NOTARY_CONF"
         echo "  (NOTARY_KEY_FILE=…AuthKey_XXX.p8, NOTARY_KEY_ID=…, NOTARY_ISSUER_ID=…)."
-        echo "Вариант 2: keychain-профиль (пароль — app-specific password, интерактивно):"
-        echo "  xcrun notarytool store-credentials $NOTARIZE_PROFILE \\"
-        echo "      --apple-id xrashid@gmail.com --team-id 9GEWCZ59HK"
+        echo "Вариант 2: настройте keychain-профиль через xcrun notarytool store-credentials."
         exit 69
     fi
     echo "→ Notary credentials OK ($NOTARY_VIA)"
@@ -185,7 +192,6 @@ rm -f "$DMG_TEMP"
 # 9a. Подписываем САМ .dmg Developer ID. Без этого образ нотаризуется и стейплится, но
 #     `spctl -t install` даёт "no usable signature" — у скачанного образа нет подписи
 #     контейнера, и на части Mac это приводит к недоверию к вынутому из него .app.
-SIGN_ID="Developer ID Application: Rashid Nasibulin (9GEWCZ59HK)"
 if [ "${SKIP_NOTARIZE:-0}" != "1" ]; then
     echo "→ Code signing the DMG (Developer ID + secure timestamp)..."
     codesign --force --timestamp --sign "$SIGN_ID" "$DMG_NAME"
@@ -210,25 +216,10 @@ else
     spctl -a -vvv -t install "$DMG_NAME" 2>&1 || echo "WARNING: spctl install assessment did not pass"
 fi
 
-# 11. Записываем sha256 обратно в version.json и cask — хэш механически привязан
-#     к реально собранному DMG, а не копируется руками (раньше это расходилось).
+# 11. Печатаем sha256 готового локального артефакта для ручной проверки.
 DMG_SHA=$(shasum -a 256 "$DMG_NAME" | awk '{print $1}')
-echo "→ Writing sha256 into version.json and ruswitcher.rb..."
-/usr/bin/python3 - "$DMG_SHA" <<'PY'
-import json, sys
-sha = sys.argv[1]
-with open("version.json") as f:
-    data = json.load(f)
-data["sha256"] = sha
-with open("version.json", "w") as f:
-    json.dump(data, f, indent=2)
-    f.write("\n")
-PY
-/usr/bin/sed -i '' -E "s/^([[:space:]]*sha256 \").*(\")/\1${DMG_SHA}\2/" "$SCRIPT_DIR/ruswitcher.rb"
-/usr/bin/sed -i '' -E "s/^([[:space:]]*version \").*(\")/\1${VERSION}\2/" "$SCRIPT_DIR/ruswitcher.rb"
 
 echo ""
 echo "=== Done! ==="
 echo "DMG: $(pwd)/$DMG_NAME ($(du -h "$DMG_NAME" | cut -f1))"
 echo "SHA256: $DMG_SHA"
-echo "→ version.json and ruswitcher.rb updated with this hash."

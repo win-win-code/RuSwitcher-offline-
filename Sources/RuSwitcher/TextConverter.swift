@@ -1,419 +1,295 @@
-import AppKit
-import ApplicationServices
 import CoreGraphics
+import Foundation
 
-/// Конвертация текста между раскладками
+/// Локальная конвертация текста между раскладками без буфера обмена.
 @MainActor
 final class TextConverter {
-    private var lastConvertedCount = 0
-    private var lastBoundaryCount = 0
-    private var savedClipboardItems: [NSPasteboardItem]?
-    private var clipboardRestoreWork: DispatchWorkItem?
     private var isConverting = false
-    /// Очередь для инжекта нажатий буферного движка — чтобы usleep не блокировал
-    /// main-поток, на котором висит event tap (иначе тап голодает → лаги/потери нажатий).
-    nonisolated private let injectQueue = DispatchQueue(label: "com.ruswitcher.inject", qos: .userInteractive)
-
-    // Состояние движка перепечатки (буфер нажатий → юникод-вставка)
     private var lastOriginal = ""
     private var lastConverted = ""
-    private var lastWasBuffer = false
+    private var lastTarget: AutoSwitchPolicy.FocusedInput?
+    private var sensitiveStateClearWork: DispatchWorkItem?
+    private var injectionTask: Task<Void, Never>?
+    private var injectionGeneration: UInt = 0
 
-    /// Создаёт CGEventSource с маркером, чтобы KeyboardMonitor игнорировал наши события
+    /// Создаёт CGEventSource с маркером, чтобы KeyboardMonitor игнорировал наши события.
     nonisolated private func makeSource() -> CGEventSource? {
         let source = CGEventSource(stateID: .hidSystemState)
         source?.userData = kRuSwitcherEventMarker
         return source
     }
 
-    /// Проверяет, что текущий фокусированный элемент — редактируемое текстовое поле
-    private func isFocusedElementEditable() -> Bool {
-        guard let app = NSWorkspace.shared.frontmostApplication else { return false }
-        let axApp = AXUIElementCreateApplication(app.processIdentifier)
-
-        var focusedRaw: AnyObject?
-        let err = AXUIElementCopyAttributeValue(axApp, kAXFocusedUIElementAttribute as CFString, &focusedRaw)
-        guard err == .success, let focused = focusedRaw else {
-            rslog("editable: no focused element")
+    /// Стирает набранное слово и впечатывает конвертированное напрямую через Unicode.
+    /// Глобальный буфер обмена не используется ни при каких условиях.
+    func convert(wordKeys: [TypedKey], prevWordKeys: [TypedKey], boundaryCount: Int,
+                 expectedTarget: AutoSwitchPolicy.FocusedInput,
+                 completion: @escaping (Bool) -> Void) -> Bool {
+        guard !isConverting else { return false }
+        guard let target = captureSafeTarget(matching: expectedTarget) else {
+            clearState()
             return false
         }
 
-        let element = focused as! AXUIElement
-
-        // Проверяем роль
-        var roleRaw: AnyObject?
-        AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRaw)
-        let role = (roleRaw as? String) ?? ""
-
-        // Текстовые роли
-        let textRoles = ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField", "AXWebArea"]
-        if textRoles.contains(role) {
-            // Дополнительно: не read-only?
-            var editableRaw: AnyObject?
-            let editErr = AXUIElementCopyAttributeValue(element, "AXEditable" as CFString, &editableRaw)
-            // Если атрибут отсутствует — считаем editable (у AXWebArea его может не быть)
-            if editErr == .success, let editable = editableRaw as? Bool {
-                rslog("editable: role=\(role) editable=\(editable)")
-                return editable
-            }
-            rslog("editable: role=\(role) (no AXEditable attr, assuming yes)")
-            return true
-        }
-
-        rslog("editable: role=\(role) — not a text field")
-        return false
-    }
-
-    // MARK: - Public API
-
-    /// Движок перепечатки: стираем набранное и впечатываем конвертированное через
-    /// юникод-вставку — без буфера обмена и без выделения (работает в Atom/Electron).
-    /// Падает на clipboard-движок, если буфера нет (текст выделен мышью) или
-    /// раскладки не определились.
-    /// passthroughSuffix (issue #15): прилипшая к слову пунктуация — стирается вместе со
-    /// словом и возвращается в поле как есть, БЕЗ кейкод-конверсии (',' EN ↔ 'б' RU).
-    func convert(wordKeys: [TypedKey], prevWordKeys: [TypedKey], boundaryCount: Int,
-                 passthroughSuffix: String = "") -> Bool {
         let keys: [TypedKey]
         let trailingSpaces: Int
         if !wordKeys.isEmpty {
-            keys = wordKeys; trailingSpaces = 0
+            keys = wordKeys
+            trailingSpaces = 0
         } else if !prevWordKeys.isEmpty && boundaryCount > 0 {
-            keys = prevWordKeys; trailingSpaces = boundaryCount
+            keys = prevWordKeys
+            trailingSpaces = boundaryCount
         } else {
-            // нет буфера — возможно, выделен мышью старый текст: пусть решает clipboard
-            return convertViaClipboard(wordLength: 0, prevWordLength: 0, boundaryCount: 0)
+            return false
         }
 
-        guard let pair = DynamicKeyMapping.convertKeys(keys) else {
-            // Clipboard-путь про суффикс не знает (селекция посчиталась бы неверно) —
-            // точность важнее полноты: с суффиксом тихо отказываемся.
-            guard passthroughSuffix.isEmpty else {
-                rslog("buffer convert: suffix + unresolved layouts — bail")
-                return false
-            }
-            rslog("buffer convert: layouts not resolved — fallback to clipboard")
-            return convertViaClipboard(wordLength: wordKeys.count, prevWordLength: prevWordKeys.count, boundaryCount: boundaryCount)
-        }
-
-        guard !isConverting else { return false }
-        isConverting = true
+        guard let pair = DynamicKeyMapping.convertKeys(keys) else { return false }
 
         let spaces = String(repeating: " ", count: trailingSpaces)
-        let bsCount = keys.count + passthroughSuffix.count + trailingSpaces
-        let insert = pair.converted + passthroughSuffix + spaces
-        lastOriginal = pair.original + passthroughSuffix + spaces
-        lastConverted = pair.converted + passthroughSuffix + spaces
-        lastWasBuffer = true
-        rslog("buffer convert: \(keys.count) keys (+\(passthroughSuffix.count) punct, +\(trailingSpaces) sp)")
-
-        // Инжект — вне main, чтобы usleep не голодал event tap.
-        injectQueue.async { [weak self] in
-            guard let self else { return }
-            self.backspace(bsCount)
-            usleep(20_000)
-            self.insertText(insert)
-            Task { @MainActor in self.isConverting = false }
-        }
+        let backspaceCount = keys.count + trailingSpaces
+        let insert = pair.converted + spaces
+        let erasedText = pair.original + spaces
+        lastOriginal = erasedText
+        lastConverted = insert
+        lastTarget = target
+        scheduleSensitiveStateClear()
+        beginInjection(
+            backspaceCount: backspaceCount,
+            insert: insert,
+            erasedText: erasedText,
+            target: target,
+            completion: completion
+        )
         return true
     }
 
-    /// Повторная конвертация (второй триггер) — на тот движок, которым делали последнюю.
-    func reconvert() -> Bool {
-        guard !isConverting else { return false }
-        if lastWasBuffer {
-            guard !lastConverted.isEmpty else { return false }
-            isConverting = true
-            rslog("buffer reconvert")
-            let bsCount = lastConverted.count
-            let insert = lastOriginal
-            let tmp = lastOriginal; lastOriginal = lastConverted; lastConverted = tmp
-            injectQueue.async { [weak self] in
-                guard let self else { return }
-                self.backspace(bsCount)
-                usleep(20_000)
-                self.insertText(insert)
-                Task { @MainActor in self.isConverting = false }
-            }
-            return true
-        }
-        return reconvertViaClipboard()
-    }
-
-    /// Конвертация через буфер обмена (фолбэк: выделенный мышью текст и т.п.).
-    /// Сначала проверяет выделение, потом пробует слово по счётчику.
-    func convertViaClipboard(wordLength: Int, prevWordLength: Int, boundaryCount: Int) -> Bool {
-        guard !isConverting else {
-            rslog("convert: skipped — already converting")
-            return false
-        }
-        isConverting = true
-        lastWasBuffer = false
-        defer { isConverting = false }
-
-        if !isFocusedElementEditable() {
-            rslog("convert: element may not be editable, trying anyway")
-        }
-        let pasteboard = NSPasteboard.general
-        cancelClipboardRestore()
-        savedClipboardItems = snapshotPasteboard(pasteboard)
-
-        var conversionSucceeded = false
-        defer {
-            // Любой ранний выход без успеха обязан вернуть буфер пользователю —
-            // иначе clipboard остаётся пустым или с конвертированным текстом.
-            if !conversionSucceeded { restoreClipboardNow() }
-        }
-
-        // --- Попытка 1: уже есть выделенный текст? ---
-        if let text = tryCopy(pasteboard) {
-            rslog("convert: selection len=\(text.count)")
-            let converted = DynamicKeyMapping.convert(text).precomposedStringWithCanonicalMapping
-            pasteText(converted, pasteboard: pasteboard)
-            // Курсор остаётся в конце вставленного текста — не пере-выделяем,
-            // чтобы следующий ввод не затёр результат. Для reconvert используется
-            // унифицированный путь через selectBack(lastConvertedCount).
-            lastConvertedCount = converted.count
-            lastBoundaryCount = 0
-            conversionSucceeded = true
-            scheduleClipboardRestore()
-            return true
-        }
-
-        // --- Попытка 2: выделяем слово по счётчику ---
-        let charCount: Int
-        let usedBoundary: Int
-
-        if wordLength > 0 {
-            charCount = wordLength
-            usedBoundary = 0
-        } else if prevWordLength > 0 && boundaryCount > 0 {
-            moveLeft(boundaryCount)
-            charCount = prevWordLength
-            usedBoundary = boundaryCount
-        } else {
-            rslog("convert: nothing to convert (wordLen=\(wordLength) prevLen=\(prevWordLength))")
+    /// Повторная конвертация сразу после предыдущей операции.
+    func reconvert(completion: @escaping (Bool) -> Void) -> Bool {
+        guard !isConverting, !lastConverted.isEmpty, let lastTarget else { return false }
+        guard let target = captureSafeTarget(matching: lastTarget) else {
+            clearState()
             return false
         }
 
-        rslog("convert: selecting \(charCount) chars (boundary=\(usedBoundary))")
-        selectBack(charCount)
-        usleep(50_000)
-
-        guard let text = tryCopy(pasteboard) else {
-            rslog("convert: copy failed")
-            simKey(keyCode: KC.right, flags: []) // снять выделение
-            moveRight(usedBoundary)
-            return false
-        }
-
-        rslog("convert: word len=\(text.count)")
-        let converted = DynamicKeyMapping.convert(text).precomposedStringWithCanonicalMapping
-        pasteText(converted, pasteboard: pasteboard)
-
-        moveRight(usedBoundary)
-
-        lastConvertedCount = converted.count
-        lastBoundaryCount = usedBoundary
-        conversionSucceeded = true
-        scheduleClipboardRestore()
+        let backspaceCount = lastConverted.count
+        let insert = lastOriginal
+        let erasedText = lastConverted
+        swap(&lastOriginal, &lastConverted)
+        scheduleSensitiveStateClear()
+        beginInjection(
+            backspaceCount: backspaceCount,
+            insert: insert,
+            erasedText: erasedText,
+            target: target,
+            completion: completion
+        )
         return true
     }
 
-    /// Повторная конвертация через буфер обмена (фолбэк).
-    private func reconvertViaClipboard() -> Bool {
-        guard !isConverting else {
-            rslog("reconvert: skipped — already converting")
-            return false
-        }
-        isConverting = true
-        defer { isConverting = false }
-
-        rslog("reconvert: lastCount=\(lastConvertedCount) boundary=\(lastBoundaryCount)")
-        guard lastConvertedCount > 0 else { return false }
-
-        let pasteboard = NSPasteboard.general
-        // Отменяем отложенное восстановление clipboard — мы ещё работаем
-        cancelClipboardRestore()
-
-        moveLeft(lastBoundaryCount)
-
-        selectBack(lastConvertedCount)
-        usleep(80_000)  // дать приложению обработать выделение
-
-        guard let text = tryCopy(pasteboard) else {
-            rslog("reconvert: copy failed, count=\(lastConvertedCount)")
-            simKey(keyCode: KC.right, flags: [])
-            moveRight(lastBoundaryCount)
-            scheduleClipboardRestore()
-            return false
-        }
-
-        rslog("reconvert: len=\(text.count) → converting")
-        let converted = DynamicKeyMapping.convert(text).precomposedStringWithCanonicalMapping
-        pasteText(converted, pasteboard: pasteboard)
-
-        moveRight(lastBoundaryCount)
-
-        lastConvertedCount = converted.count
-        scheduleClipboardRestore()
-        return true
-    }
-
+    /// Немедленно отменяет инжект и стирает сохранённые в памяти строки.
     func clearState() {
-        lastConvertedCount = 0
-        lastBoundaryCount = 0
+        injectionGeneration &+= 1
+        injectionTask?.cancel()
+        injectionTask = nil
+        isConverting = false
+        eraseRetainedText()
+    }
+
+    private func captureSafeTarget(
+        matching expectedTarget: AutoSwitchPolicy.FocusedInput
+    ) -> AutoSwitchPolicy.FocusedInput? {
+        guard SettingsManager.shared.autoSwitchEnabled,
+              let focused = AutoSwitchPolicy.currentSafeFocusedInput(),
+              !AutoSwitchPolicy.isProtectedApp(focused.bundleIdentifier),
+              AutoSwitchPolicy.sameIdentity(focused, expectedTarget) else { return nil }
+        return focused
+    }
+
+    private func targetIsSafe(_ target: AutoSwitchPolicy.FocusedInput) -> Bool {
+        guard SettingsManager.shared.autoSwitchEnabled,
+              let focused = AutoSwitchPolicy.currentSafeFocusedInput(),
+              AutoSwitchPolicy.sameIdentity(focused, target),
+              !AutoSwitchPolicy.isProtectedApp(focused.bundleIdentifier) else { return false }
+        return true
+    }
+
+    private func targetIsStillSafe(
+        _ target: AutoSwitchPolicy.FocusedInput,
+        generation: UInt
+    ) -> Bool {
+        generation == injectionGeneration && !Task.isCancelled && targetIsSafe(target)
+    }
+
+    /// Инжект выполняется как отменяемая MainActor-задача. Между событиями actor
+    /// освобождается, а прямо перед каждым событием заново проверяются master toggle,
+    /// Secure Input, AX-защита и identity поля/приложения.
+    private func beginInjection(
+        backspaceCount: Int,
+        insert: String,
+        erasedText: String,
+        target: AutoSwitchPolicy.FocusedInput,
+        completion: @escaping (Bool) -> Void
+    ) {
+        injectionGeneration &+= 1
+        let generation = injectionGeneration
+        injectionTask?.cancel()
+        isConverting = true
+
+        injectionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            var backspacesSent = 0
+
+            for _ in 0..<backspaceCount {
+                guard self.targetIsStillSafe(target, generation: generation) else {
+                    self.finishInjection(
+                        generation: generation,
+                        succeeded: false,
+                        backspacesSent: backspacesSent,
+                        erasedText: erasedText,
+                        target: target,
+                        completion: completion
+                    )
+                    return
+                }
+                guard self.simKey(keyCode: KC.backspace, flags: []) else {
+                    self.finishInjection(
+                        generation: generation,
+                        succeeded: false,
+                        backspacesSent: backspacesSent,
+                        erasedText: erasedText,
+                        target: target,
+                        completion: completion
+                    )
+                    return
+                }
+                backspacesSent += 1
+                guard await self.pause(nanoseconds: 3_000_000) else {
+                    self.finishInjection(
+                        generation: generation,
+                        succeeded: false,
+                        backspacesSent: backspacesSent,
+                        erasedText: erasedText,
+                        target: target,
+                        completion: completion
+                    )
+                    return
+                }
+            }
+
+            guard await self.pause(nanoseconds: 20_000_000),
+                  self.targetIsStillSafe(target, generation: generation) else {
+                self.finishInjection(
+                    generation: generation,
+                    succeeded: false,
+                    backspacesSent: backspacesSent,
+                    erasedText: erasedText,
+                    target: target,
+                    completion: completion
+                )
+                return
+            }
+
+            guard self.insertText(insert) else {
+                self.finishInjection(
+                    generation: generation,
+                    succeeded: false,
+                    backspacesSent: backspacesSent,
+                    erasedText: erasedText,
+                    target: target,
+                    completion: completion
+                )
+                return
+            }
+            self.finishInjection(
+                generation: generation,
+                succeeded: true,
+                backspacesSent: backspacesSent,
+                erasedText: erasedText,
+                target: target,
+                completion: completion
+            )
+        }
+    }
+
+    private func pause(nanoseconds: UInt64) async -> Bool {
+        do {
+            try await Task.sleep(nanoseconds: nanoseconds)
+            return !Task.isCancelled
+        } catch {
+            return false
+        }
+    }
+
+    private func finishInjection(
+        generation: UInt,
+        succeeded: Bool,
+        backspacesSent: Int,
+        erasedText: String,
+        target: AutoSwitchPolicy.FocusedInput,
+        completion: (Bool) -> Void
+    ) {
+        guard generation == injectionGeneration else { return }
+        injectionTask = nil
+        isConverting = false
+        if !succeeded {
+            if backspacesSent > 0, targetIsSafe(target) {
+                _ = insertText(String(erasedText.suffix(backspacesSent)))
+            }
+            eraseRetainedText()
+        }
+        completion(succeeded)
+    }
+
+    private func eraseRetainedText() {
+        sensitiveStateClearWork?.cancel()
+        sensitiveStateClearWork = nil
         lastOriginal = ""
         lastConverted = ""
-        lastWasBuffer = false
+        lastTarget = nil
     }
 
-    // MARK: - Private
-
-    /// Стирает n символов (Backspace × n) — для движка перепечатки.
-    nonisolated private func backspace(_ n: Int) {
-        for _ in 0..<n {
-            simKey(keyCode: KC.backspace, flags: [])
-            usleep(3_000)
+    private func scheduleSensitiveStateClear() {
+        sensitiveStateClearWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.lastOriginal = ""
+            self?.lastConverted = ""
+            self?.lastTarget = nil
+            self?.sensitiveStateClearWork = nil
         }
+        sensitiveStateClearWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: work)
     }
 
-    /// Впечатывает строку напрямую (юникод-вставка), без буфера обмена.
-    nonisolated private func insertText(_ text: String) {
-        guard !text.isEmpty, let source = makeSource() else { return }
+    /// Впечатывает строку напрямую, без буфера обмена.
+    nonisolated private func insertText(_ text: String) -> Bool {
+        guard !text.isEmpty, let source = makeSource() else { return false }
         let utf16 = Array(text.utf16)
         guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-              let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else { return }
-        utf16.withUnsafeBufferPointer { buf in
-            down.keyboardSetUnicodeString(stringLength: buf.count, unicodeString: buf.baseAddress)
-            up.keyboardSetUnicodeString(stringLength: buf.count, unicodeString: buf.baseAddress)
+              let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else { return false }
+        utf16.withUnsafeBufferPointer { buffer in
+            down.keyboardSetUnicodeString(
+                stringLength: buffer.count,
+                unicodeString: buffer.baseAddress
+            )
+            up.keyboardSetUnicodeString(
+                stringLength: buffer.count,
+                unicodeString: buffer.baseAddress
+            )
         }
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
+        return true
     }
 
-    /// Вставляет текст через Cmd+V и ждёт завершения
-    private func pasteText(_ text: String, pasteboard: NSPasteboard) {
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
-        simKey(keyCode: KC.letterV, flags: .maskCommand) // Cmd+V
-        usleep(150_000) // 150мс — дать приложению вставить текст и обновить курсор
-    }
-
-    /// Отменяет отложенное восстановление clipboard
-    private func cancelClipboardRestore() {
-        clipboardRestoreWork?.cancel()
-        clipboardRestoreWork = nil
-    }
-
-    /// Немедленно возвращает буфер обмена пользователю (для путей-неудач).
-    private func restoreClipboardNow() {
-        cancelClipboardRestore()
-        guard let saved = savedClipboardItems else { return }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        if !saved.isEmpty { pasteboard.writeObjects(saved) }
-        savedClipboardItems = nil
-    }
-
-    /// Сбрасывает отложенное восстановление немедленно — вызывается перед
-    /// завершением приложения, чтобы не потерять буфер в 2-секундном окне.
-    func flushPendingClipboardRestore() {
-        guard clipboardRestoreWork != nil else { return }
-        restoreClipboardNow()
-    }
-
-    /// Планирует восстановление clipboard через 2 секунды
-    /// (если за это время придёт reconvert — отменится и перепланируется)
-    private func scheduleClipboardRestore() {
-        cancelClipboardRestore()
-        let saved = self.savedClipboardItems
-        let work = DispatchWorkItem { [weak self] in
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            if let saved, !saved.isEmpty {
-                pasteboard.writeObjects(saved)
-            }
-            self?.savedClipboardItems = nil
-            rslog("clipboard restored (\(saved?.count ?? 0) items)")
-        }
-        clipboardRestoreWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: work)
-    }
-
-    /// Делает глубокую копию всех pasteboard items (со всеми типами данных).
-    /// Это нужно потому, что NSPasteboardItem становится невалидным после
-    /// pasteboard.clearContents() — поэтому копируем data по каждому типу
-    /// в новые NSPasteboardItem.
-    private func snapshotPasteboard(_ pb: NSPasteboard) -> [NSPasteboardItem] {
-        guard let items = pb.pasteboardItems else { return [] }
-        return items.map { oldItem in
-            let newItem = NSPasteboardItem()
-            for type in oldItem.types {
-                if let data = oldItem.data(forType: type) {
-                    newItem.setData(data, forType: type)
-                }
-            }
-            return newItem
-        }
-    }
-
-    /// Копирует выделенный текст. Делает до 3 попыток (Cmd+C не всегда срабатывает с первого раза)
-    private func tryCopy(_ pasteboard: NSPasteboard) -> String? {
-        for attempt in 0..<3 {
-            // Очищаем буфер перед копированием — гарантирует что changeCount изменится
-            pasteboard.clearContents()
-            let oldCount = pasteboard.changeCount
-
-            simKey(keyCode: KC.letterC, flags: .maskCommand) // Cmd+C
-            usleep(attempt == 0 ? 80_000 : 120_000)
-
-            if pasteboard.changeCount != oldCount,
-               let text = pasteboard.string(forType: .string),
-               !text.isEmpty {
-                return text
-            }
-            usleep(50_000) // пауза перед retry
-        }
-        return nil
-    }
-
-    /// Выделяет N символов влево (Shift+Left × N)
-    nonisolated private func selectBack(_ count: Int) {
-        for _ in 0..<count {
-            simKey(keyCode: KC.left, flags: .maskShift)
-            usleep(3_000)
-        }
-    }
-
-    /// Сдвигает курсор влево на N символов
-    nonisolated private func moveLeft(_ count: Int) {
-        for _ in 0..<count {
-            simKey(keyCode: KC.left, flags: [])
-            usleep(3_000)
-        }
-    }
-
-    /// Сдвигает курсор вправо на N символов (восстановление границ-пробелов)
-    nonisolated private func moveRight(_ count: Int) {
-        for _ in 0..<count {
-            simKey(keyCode: KC.right, flags: [])
-            usleep(3_000)
-        }
-    }
-
-    /// Симулирует нажатие клавиши с маркером (чтобы наш monitor игнорировал)
-    nonisolated private func simKey(keyCode: UInt16, flags: CGEventFlags) {
-        guard let source = makeSource() else { return }
-
-        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
-        else { return }
+    /// Симулирует нажатие клавиши с локальным маркером приложения.
+    nonisolated private func simKey(keyCode: UInt16, flags: CGEventFlags) -> Bool {
+        guard let source = makeSource(),
+              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else { return false }
 
         keyDown.flags = flags
         keyUp.flags = flags
-
         keyDown.post(tap: .cghidEventTap)
         keyUp.post(tap: .cghidEventTap)
+        return true
     }
 }

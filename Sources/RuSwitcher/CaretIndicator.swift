@@ -130,11 +130,9 @@ final class CaretIndicator {
     private func axCaretRectAppKit() -> NSRect? {
         guard SettingsManager.shared.caretFlag else { return nil }
         guard AXIsProcessTrusted() else { return nil }
-        guard !AutoSwitchPolicy.secureInputActive else { return nil }          // не над полем пароля
+        guard !AutoSwitchPolicy.protectedInputActive else { return nil }       // не над полем пароля
         let frontID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        // denylist авто-конверсии НЕ применяем: он про «не менять текст», а флаг ничего не меняет —
-        // в IDE/терминалах индикатор раскладки как раз полезен. Пароли закрыты secure-input выше.
-        guard !AutoSwitchPolicy.shouldDeferToRemoteClient else { return nil }  // удалёнка: каретка на той стороне
+        // Флаг ничего не меняет; защищённые поля отсеяны выше.
         guard frontID != Bundle.main.bundleIdentifier else { return nil }      // не над своим окном
 
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }

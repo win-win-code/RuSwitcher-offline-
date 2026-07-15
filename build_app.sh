@@ -58,10 +58,10 @@ cp "$PROJECT_DIR/RuSwitcher.icns" "$APP_BUNDLE/Contents/Resources/RuSwitcher.icn
 # 6. Создаём PkgInfo
 echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
 
-# 7. Подписываем Developer ID (разрешения macOS привязаны к подписи —
-#    при одинаковой подписи разрешения сохраняются между обновлениями)
-SIGN_ID="Developer ID Application: Rashid Nasibulin (9GEWCZ59HK)"
-echo "→ Code signing with Developer ID..."
+# 7. По умолчанию используем локальную ad-hoc подпись. Для релизной подписи передайте
+#    SIGN_ID="Developer ID Application: ..." явно в окружении.
+SIGN_ID="${SIGN_ID:--}"
+echo "→ Code signing with: $SIGN_ID"
 codesign --force --deep --sign "$SIGN_ID" \
     --options runtime \
     --entitlements "$PROJECT_DIR/RuSwitcher.entitlements" \

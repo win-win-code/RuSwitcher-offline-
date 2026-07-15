@@ -1,5 +1,4 @@
 import AppKit
-import Carbon
 
 /// Окно настроек с вкладками
 @MainActor
@@ -7,21 +6,16 @@ final class SettingsWindowController {
     private var window: NSWindow?
     private var autoSwitchCheckbox: NSButton?
     private var launchAtLoginCheckbox: NSButton?
-    private var checkUpdatesCheckbox: NSButton?
-    private var debugLogCheckbox: NSButton?
     private var caretFlagCheckbox: NSButton?
     private var layout1Popup: NSPopUpButton?
     private var layout2Popup: NSPopUpButton?
     private var languagePopup: NSPopUpButton?
-    private var exceptionEditors: [ExceptionListEditor] = []
 
     /// Callback для обновления меню
     var onAutoSwitchChanged: ((Bool) -> Void)?
     var onPerAppLayoutChanged: ((Bool) -> Void)?
     var onLanguageChanged: (() -> Void)?
     var onTriggerChanged: (() -> Void)?
-    var onAutoConvertChanged: ((Bool) -> Void)?
-    var onRemoteDesktopChanged: ((Bool) -> Void)?
     var onCaretFlagChanged: ((Bool) -> Void)?
 
     func showWindow() {
@@ -45,9 +39,7 @@ final class SettingsWindowController {
         tabView.autoresizingMask = [.width, .height]
 
         tabView.addTabViewItem(createGeneralTab())
-        tabView.addTabViewItem(createExceptionsTab())
         tabView.addTabViewItem(createAboutTab())
-        tabView.addTabViewItem(createAdvancedTab())
 
         win.contentView = tabView
         win.makeKeyAndOrderFront(nil)
@@ -129,22 +121,20 @@ final class SettingsWindowController {
         view.addSubview(perAppCheckbox)
         y -= 30
 
-        // Авто-проверка обновлений
-        let updCheckbox = NSButton(checkboxWithTitle: L10n.settingsCheckUpdates,
-                                   target: self, action: #selector(checkUpdatesEnabledChanged))
-        updCheckbox.frame = NSRect(x: 20, y: y, width: 420, height: 22)
-        updCheckbox.state = SettingsManager.shared.checkUpdatesEnabled ? .on : .off
-        updCheckbox.toolTip = L10n.settingsCheckUpdatesHint
-        view.addSubview(updCheckbox)
-        checkUpdatesCheckbox = updCheckbox
-        y -= 18
+        // Флаг у курсора (issue #10)
+        let caretFlag = NSButton(checkboxWithTitle: L10n.settingsCaretFlag, target: self, action: #selector(caretFlagChanged))
+        caretFlag.frame = NSRect(x: 20, y: y, width: 420, height: 22)
+        caretFlag.state = SettingsManager.shared.caretFlag ? .on : .off
+        view.addSubview(caretFlag)
+        caretFlagCheckbox = caretFlag
+        y -= 24
 
-        let updHint = NSTextField(wrappingLabelWithString: L10n.settingsCheckUpdatesHint)
-        updHint.frame = NSRect(x: 40, y: y - 18, width: 400, height: 32)
-        updHint.font = .systemFont(ofSize: 11)
-        updHint.textColor = .secondaryLabelColor
-        view.addSubview(updHint)
-        y -= 40
+        let caretFlagHint = NSTextField(wrappingLabelWithString: L10n.settingsCaretFlagHint)
+        caretFlagHint.frame = NSRect(x: 40, y: y - 44, width: 400, height: 44)
+        caretFlagHint.font = .systemFont(ofSize: 11)
+        caretFlagHint.textColor = .secondaryLabelColor
+        view.addSubview(caretFlagHint)
+        y -= 52
 
         // Язык интерфейса
         let langLabel = NSTextField(labelWithString: L10n.settingsLanguage)
@@ -196,92 +186,6 @@ final class SettingsWindowController {
         return item
     }
 
-    // MARK: - Exceptions Tab
-
-    private func createExceptionsTab() -> NSTabViewItem {
-        let item = NSTabViewItem()
-        item.label = L10n.settingsTabExceptions
-
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 600))
-        var y: CGFloat = 586          // y — верх следующего элемента, идём сверху вниз
-        exceptionEditors.removeAll()
-
-        // Авто-конвертация
-        let autoConvert = NSButton(checkboxWithTitle: L10n.settingsAutoConvert, target: self, action: #selector(autoConvertChanged))
-        autoConvert.frame = NSRect(x: 20, y: y - 22, width: 420, height: 22)
-        autoConvert.state = SettingsManager.shared.autoConvert ? .on : .off
-        view.addSubview(autoConvert)
-        y -= 24
-        let acHint = NSTextField(wrappingLabelWithString: L10n.settingsAutoConvertHint)
-        acHint.frame = NSRect(x: 40, y: y - 32, width: 400, height: 32)
-        acHint.font = .systemFont(ofSize: 11); acHint.textColor = .secondaryLabelColor
-        view.addSubview(acHint)
-        y -= 38
-
-        // Флаг у курсора (issue #10)
-        let caretFlag = NSButton(checkboxWithTitle: L10n.settingsCaretFlag, target: self, action: #selector(caretFlagChanged))
-        caretFlag.frame = NSRect(x: 20, y: y - 22, width: 420, height: 22)
-        caretFlag.state = SettingsManager.shared.caretFlag ? .on : .off
-        view.addSubview(caretFlag)
-        caretFlagCheckbox = caretFlag
-        y -= 24
-        let cfHint = NSTextField(wrappingLabelWithString: L10n.settingsCaretFlagHint)
-        cfHint.frame = NSRect(x: 40, y: y - 44, width: 400, height: 44)
-        cfHint.font = .systemFont(ofSize: 11); cfHint.textColor = .secondaryLabelColor
-        view.addSubview(cfHint)
-        y -= 52
-
-        // Режим удалённого стола отложен в 2.5 — блок скрыт за флагом (для тестирования).
-        if SettingsManager.shared.showRemoteDesktopBeta {
-            let remote = NSButton(checkboxWithTitle: L10n.menuRemoteDesktop, target: self, action: #selector(remoteDesktopChanged))
-            remote.frame = NSRect(x: 20, y: y - 22, width: 420, height: 22)
-            remote.state = SettingsManager.shared.remoteDesktopMode ? .on : .off
-            view.addSubview(remote)
-            y -= 24
-            let rHint = NSTextField(wrappingLabelWithString: L10n.settingsRemoteDesktopHint)
-            rHint.frame = NSRect(x: 40, y: y - 44, width: 400, height: 44)
-            rHint.font = .systemFont(ofSize: 11); rHint.textColor = .secondaryLabelColor
-            view.addSubview(rHint)
-            y -= 52
-        }
-
-        // Секция: заголовок сверху, ниже — таблица с кнопками. Зазоры фиксированные,
-        // поэтому раскладка одинаково корректна на всех языках (заголовки не переносятся).
-        func addSection(_ title: String, _ editor: ExceptionListEditor) {
-            let header = NSTextField(labelWithString: title)
-            header.frame = NSRect(x: 20, y: y - 18, width: 420, height: 18)
-            header.font = .boldSystemFont(ofSize: 11)
-            header.lineBreakMode = .byTruncatingTail
-            view.addSubview(header)
-            let contH: CGFloat = 96
-            let cont = editor.makeContainer(frame: NSRect(x: 20, y: y - 22 - contH, width: 420, height: contH))
-            view.addSubview(cont)
-            exceptionEditors.append(editor)
-            y -= (22 + contH + 14)   // заголовок+зазор + таблица + зазор до следующей секции
-        }
-
-        addSection(L10n.settingsExceptionsApps, ExceptionListEditor(
-            kind: .apps,
-            get: { SettingsManager.shared.deniedApps },
-            set: { SettingsManager.shared.deniedApps = $0 },
-            isProtected: { AutoSwitchPolicy.protectedApps.contains($0) }))
-
-        addSection(L10n.settingsExceptionsNever, ExceptionListEditor(
-            kind: .words,
-            get: { SettingsManager.shared.deniedWords },
-            set: { SettingsManager.shared.deniedWords = $0 },
-            addWordPrompt: L10n.settingsAddWordPrompt))
-
-        addSection(L10n.settingsExceptionsAlways, ExceptionListEditor(
-            kind: .words,
-            get: { SettingsManager.shared.alwaysConvertWords },
-            set: { SettingsManager.shared.alwaysConvertWords = $0 },
-            addWordPrompt: L10n.settingsAddWordPrompt))
-
-        item.view = view
-        return item
-    }
-
     // MARK: - About Tab
 
     private func createAboutTab() -> NSTabViewItem {
@@ -306,75 +210,6 @@ final class SettingsWindowController {
         versionLabel.textColor = .secondaryLabelColor
         view.addSubview(versionLabel)
         y -= 40
-
-        // Кнопка "Звезда на GitHub"
-        let starBtn = NSButton(title: L10n.settingsStarOnGithub, target: self, action: #selector(openGitHub))
-        starBtn.frame = NSRect(x: 20, y: y, width: 420, height: 32)
-        starBtn.bezelStyle = .rounded
-        view.addSubview(starBtn)
-        y -= 40
-
-        // Кнопка доната
-        let donateBtn = NSButton(title: L10n.settingsDonate, target: self, action: #selector(openDonate))
-        donateBtn.frame = NSRect(x: 20, y: y, width: 200, height: 32)
-        donateBtn.bezelStyle = .rounded
-        view.addSubview(donateBtn)
-
-        // Кнопка контакта
-        let contactBtn = NSButton(title: L10n.settingsContact, target: self, action: #selector(openContact))
-        contactBtn.frame = NSRect(x: 230, y: y, width: 200, height: 32)
-        contactBtn.bezelStyle = .rounded
-        view.addSubview(contactBtn)
-        y -= 40
-
-        // Проверить обновления
-        let updateBtn = NSButton(title: L10n.menuCheckUpdates, target: self, action: #selector(checkUpdates))
-        updateBtn.frame = NSRect(x: 20, y: y, width: 200, height: 32)
-        updateBtn.bezelStyle = .rounded
-        view.addSubview(updateBtn)
-
-        item.view = view
-        return item
-    }
-
-    // MARK: - Advanced Tab
-
-    private func createAdvancedTab() -> NSTabViewItem {
-        let item = NSTabViewItem()
-        item.label = L10n.settingsTabAdvanced
-
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 360))
-        var y: CGFloat = 310
-
-        // Debug log
-        let debugCheckbox = NSButton(checkboxWithTitle: L10n.settingsDebugLog, target: self, action: #selector(debugLogChanged))
-        debugCheckbox.frame = NSRect(x: 20, y: y, width: 420, height: 22)
-        debugCheckbox.state = SettingsManager.shared.debugLogEnabled ? .on : .off
-        view.addSubview(debugCheckbox)
-        debugLogCheckbox = debugCheckbox
-        y -= 35
-
-        // Показать лог
-        let showLogBtn = NSButton(title: L10n.settingsShowLog, target: self, action: #selector(showLogFile))
-        showLogBtn.frame = NSRect(x: 20, y: y, width: 180, height: 32)
-        showLogBtn.bezelStyle = .rounded
-        view.addSubview(showLogBtn)
-
-        // Отправить лог
-        let sendLogBtn = NSButton(title: L10n.settingsSendLog, target: self, action: #selector(sendLogFile))
-        sendLogBtn.frame = NSRect(x: 210, y: y, width: 180, height: 32)
-        sendLogBtn.bezelStyle = .rounded
-        view.addSubview(sendLogBtn)
-        y -= 50
-
-        // Путь к логу
-        let logPath = logFilePath()
-        let pathLabel = NSTextField(wrappingLabelWithString: logPath)
-        pathLabel.frame = NSRect(x: 20, y: y - 20, width: 420, height: 40)
-        pathLabel.font = .systemFont(ofSize: 10)
-        pathLabel.textColor = .tertiaryLabelColor
-        pathLabel.isSelectable = true
-        view.addSubview(pathLabel)
 
         item.view = view
         return item
@@ -475,10 +310,6 @@ final class SettingsWindowController {
         SettingsManager.shared.launchAtLogin = sender.state == .on
     }
 
-    @objc private func checkUpdatesEnabledChanged(_ sender: NSButton) {
-        SettingsManager.shared.checkUpdatesEnabled = sender.state == .on
-    }
-
     @objc private func languageChanged(_ sender: NSPopUpButton) {
         let langCode = (sender.selectedItem?.representedObject as? String) ?? ""
         SettingsManager.shared.interfaceLanguage = langCode  // вызывает L10n.reloadLanguage()
@@ -520,85 +351,10 @@ final class SettingsWindowController {
         onTriggerChanged?()
     }
 
-    @objc private func autoConvertChanged(_ sender: NSButton) {
-        let enabled = sender.state == .on
-        SettingsManager.shared.autoConvert = enabled
-        onAutoConvertChanged?(enabled)
-    }
-
-    @objc private func remoteDesktopChanged(_ sender: NSButton) {
-        let enabled = sender.state == .on
-        SettingsManager.shared.remoteDesktopMode = enabled
-        onRemoteDesktopChanged?(enabled)
-    }
-
     @objc private func caretFlagChanged(_ sender: NSButton) {
         let enabled = sender.state == .on
         SettingsManager.shared.caretFlag = enabled
         onCaretFlagChanged?(enabled)
     }
 
-    @objc private func debugLogChanged(_ sender: NSButton) {
-        SettingsManager.shared.debugLogEnabled = sender.state == .on
-    }
-
-    @objc private func openGitHub() {
-        if let url = URL(string: SettingsManager.githubURL) {
-            NSWorkspace.shared.open(url)
-        }
-    }
-
-    @objc private func openDonate() {
-        if let url = URL(string: SettingsManager.shared.donateURL) {
-            NSWorkspace.shared.open(url)
-        }
-    }
-
-    @objc private func openContact() {
-        let email = SettingsManager.shared.contactEmail
-        let subject = "RuSwitcher Feedback"
-        if let url = URL(string: "mailto:\(email)?subject=\(subject.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? subject)") {
-            NSWorkspace.shared.open(url)
-        }
-    }
-
-    @objc private func checkUpdates() {
-        UpdateChecker.checkNow()
-    }
-
-    @objc private func showLogFile() {
-        let path = logFilePath()
-        if FileManager.default.fileExists(atPath: path) {
-            NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
-        } else {
-            let alert = NSAlert()
-            alert.messageText = "Log file not found"
-            alert.informativeText = "Enable debug logging first."
-            alert.runModal()
-        }
-    }
-
-    @objc private func sendLogFile() {
-        let path = logFilePath()
-        guard FileManager.default.fileExists(atPath: path) else {
-            showLogFile() // покажет алерт
-            return
-        }
-
-        let url = URL(fileURLWithPath: path)
-        if let service = NSSharingService(named: .composeEmail) {
-            service.perform(withItems: [
-                "RuSwitcher debug log" as NSString,
-                url
-            ])
-        } else {
-            // Fallback: показать в Finder
-            NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
-        }
-    }
-
-    private func logFilePath() -> String {
-        let logDir = NSHomeDirectory() + "/Library/Logs/RuSwitcher"
-        return logDir + "/ruswitcher.log"
-    }
 }
