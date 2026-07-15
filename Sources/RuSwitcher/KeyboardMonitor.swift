@@ -441,25 +441,44 @@ private func keyboardCallback(
 
     let monitor = Unmanaged<KeyboardMonitor>.fromOpaque(userInfo).takeUnretainedValue()
 
-    // Не извлекаем keycode, пока не получили проверенную identity незащищённого поля.
-    guard SettingsManager.shared.autoSwitchEnabled,
+    guard SettingsManager.shared.autoSwitchEnabled else {
+        monitor.clearSensitiveState()
+        return Unmanaged.passUnretained(event)
+    }
+
+    // flagsChanged не содержит вводимого текста. Обрабатываем триггер до AX-проверки:
+    // кратковременный timeout Accessibility на press/release не должен сбрасывать
+    // triggerArmed и полностью глушить конвертацию.
+    if type == .flagsChanged {
+        guard !AutoSwitchPolicy.secureInputActive,
+              !AutoSwitchPolicy.isProtectedApp(
+                  NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+              ) else {
+            monitor.clearSensitiveState()
+            return Unmanaged.passUnretained(event)
+        }
+        let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+        if monitor.handleFlagsChanged(flags: event.flags, keyCode: keyCode) {
+            return nil  // съедаем Caps Lock, чтобы не переключался регистр
+        }
+        return Unmanaged.passUnretained(event)
+    }
+
+    if type == .leftMouseDown || type == .rightMouseDown || type == .otherMouseDown {
+        monitor.resetBuffersOnClick()
+        return Unmanaged.passUnretained(event)
+    }
+
+    // Не извлекаем keycode набранного символа, пока не получили проверенную identity
+    // незащищённого поля. Финальная проверка повторяется перед инжектом в TextConverter.
+    guard type == .keyDown,
           let focusedInput = AutoSwitchPolicy.currentSafeFocusedInput(),
           !AutoSwitchPolicy.isProtectedApp(focusedInput.bundleIdentifier) else {
         monitor.clearSensitiveState()
         return Unmanaged.passUnretained(event)
     }
-
-    if type == .keyDown {
-        let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-        monitor.handleKeyDown(keyCode: keyCode, flags: event.flags, focusedInput: focusedInput)
-    } else if type == .flagsChanged {
-        let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-        if monitor.handleFlagsChanged(flags: event.flags, keyCode: keyCode) {
-            return nil  // съедаем Caps Lock, чтобы не переключался регистр
-        }
-    } else if type == .leftMouseDown || type == .rightMouseDown || type == .otherMouseDown {
-        monitor.resetBuffersOnClick()
-    }
+    let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+    monitor.handleKeyDown(keyCode: keyCode, flags: event.flags, focusedInput: focusedInput)
 
     return Unmanaged.passUnretained(event)
 }

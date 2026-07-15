@@ -246,11 +246,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             onAltTap: { [weak self] in
                 guard let self else { return }
                 guard SettingsManager.shared.autoSwitchEnabled else { return }
-                guard !AutoSwitchPolicy.protectedInputActive else {
-                    self.keyboardMonitor.clearSensitiveState()
-                    self.textConverter.clearState()
-                    return
-                }
                 guard !AutoSwitchPolicy.isProtectedApp(
                     NSWorkspace.shared.frontmostApplication?.bundleIdentifier
                 ) else {
@@ -284,11 +279,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             onAltReconvert: { [weak self] in
                 guard let self else { return }
                 guard SettingsManager.shared.autoSwitchEnabled else { return }
-                guard !AutoSwitchPolicy.protectedInputActive else {
-                    self.keyboardMonitor.clearSensitiveState()
-                    self.textConverter.clearState()
-                    return
-                }
                 guard !AutoSwitchPolicy.isProtectedApp(
                     NSWorkspace.shared.frontmostApplication?.bundleIdentifier
                 ) else {
