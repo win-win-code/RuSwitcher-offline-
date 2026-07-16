@@ -77,9 +77,15 @@ final class TextConverter {
         isConverting = true
         defer { isConverting = false }
 
-        guard targetIsSafe(target),
-              AutoSwitchPolicy.replaceSelectedText(selection, in: target, with: converted) else {
-            return false
+        guard targetIsSafe(target) else { return false }
+
+        // Не все приложения дают записывать AXSelectedText (особенно браузеры и
+        // Electron). Если выделение не менялось, заменяем его обычным Unicode-вводом:
+        // активное выделение поглощает первое введённое событие без Backspace.
+        if !AutoSwitchPolicy.replaceSelectedText(selection, in: target, with: converted) {
+            guard targetIsSafe(target),
+                  AutoSwitchPolicy.selectedTextMatches(selection, in: target),
+                  insertText(converted) else { return false }
         }
 
         lastOriginal = selection.text

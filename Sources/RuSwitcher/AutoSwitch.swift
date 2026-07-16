@@ -15,17 +15,31 @@ enum AutoSwitchPolicy {
     /// вызывающего кода и нужен для явной ручной конвертации.
     struct SelectedText {
         let text: String
-        private let range: CFRange
+        private let range: CFRange?
+        private let markerRange: AnyObject?
 
         fileprivate init(text: String, range: CFRange) {
             self.text = text
             self.range = range
+            markerRange = nil
+        }
+
+        fileprivate init(text: String, markerRange: AnyObject) {
+            self.text = text
+            range = nil
+            self.markerRange = markerRange
         }
 
         fileprivate func matches(_ other: SelectedText) -> Bool {
-            text == other.text
-                && range.location == other.range.location
-                && range.length == other.range.length
+            guard text == other.text else { return false }
+            switch (range, other.range, markerRange, other.markerRange) {
+            case let (.some(lhs), .some(rhs), _, _):
+                return lhs.location == rhs.location && lhs.length == rhs.length
+            case let (_, _, .some(lhs), .some(rhs)):
+                return CFEqual(lhs, rhs)
+            default:
+                return false
+            }
         }
     }
 
@@ -126,29 +140,51 @@ enum AutoSwitchPolicy {
         AXUIElementSetMessagingTimeout(element, 0.15)
 
         var rangeRaw: AnyObject?
-        guard AXUIElementCopyAttributeValue(
+        if AXUIElementCopyAttributeValue(
             element,
             kAXSelectedTextRangeAttribute as CFString,
             &rangeRaw
         ) == .success,
-              let rangeValue = rangeRaw,
-              CFGetTypeID(rangeValue) == AXValueGetTypeID() else { return nil }
+           let rangeValue = rangeRaw,
+           CFGetTypeID(rangeValue) == AXValueGetTypeID() {
+            var range = CFRange(location: 0, length: 0)
+            if AXValueGetValue(rangeValue as! AXValue, .cfRange, &range),
+               range.location != kCFNotFound,
+               range.length > 0 {
+                var textRaw: AnyObject?
+                if AXUIElementCopyAttributeValue(
+                    element,
+                    kAXSelectedTextAttribute as CFString,
+                    &textRaw
+                ) == .success,
+                   let text = textRaw as? String,
+                   !text.isEmpty {
+                    return SelectedText(text: text, range: range)
+                }
+            }
+        }
 
-        var range = CFRange(location: 0, length: 0)
-        guard AXValueGetValue(rangeValue as! AXValue, .cfRange, &range),
-              range.location != kCFNotFound,
-              range.length > 0 else { return nil }
-
-        var textRaw: AnyObject?
+        // Chromium/Electron могут не публиковать CFRange, но отдают выделение
+        // через приватный AXTextMarker API (тот же путь используется для каретки).
+        var markerRange: AnyObject?
         guard AXUIElementCopyAttributeValue(
             element,
-            kAXSelectedTextAttribute as CFString,
+            "AXSelectedTextMarkerRange" as CFString,
+            &markerRange
+        ) == .success,
+              let markerRange else { return nil }
+
+        var textRaw: AnyObject?
+        guard AXUIElementCopyParameterizedAttributeValue(
+            element,
+            "AXStringForTextMarkerRange" as CFString,
+            markerRange as CFTypeRef,
             &textRaw
         ) == .success,
               let text = textRaw as? String,
               !text.isEmpty else { return nil }
 
-        return SelectedText(text: text, range: range)
+        return SelectedText(text: text, markerRange: markerRange)
     }
 
     /// Проверяет, что пользователь не изменил выделение между чтением и заменой.
