@@ -23,7 +23,7 @@ RuSwitcher does **not** detect or correct wrong-layout words automatically. It a
 - Monitors keyboard events while RuSwitcher is enabled.
 - Keeps key codes for the current sequence in memory. After a space, it can also convert the preceding sequence and preserve the spaces.
 - Uses the macOS `UCKeyTranslate` API to map the same physical keys between two configured layouts.
-- Sends Backspace events and inserts the converted Unicode text directly. It does not use the system clipboard.
+- Sends Backspace events and inserts converted Unicode text directly. For selected text, it uses Accessibility first and falls back to a brief Cmd+C operation when the target does not expose its selection.
 - Allows a second trigger press to reverse the last conversion while the short-lived undo state is still available.
 - Lets you select any installed layout from the menu-bar menu.
 - Optionally remembers the active layout separately for each application.
@@ -37,13 +37,14 @@ The conversion trigger can be Option, Command, Control, Shift or Caps Lock; the 
 - Conversion is manual; there is no dictionary-based or automatic correction.
 - Only two layouts are used for conversion at a time. They can be selected in Settings; if they are not selected, the app tries to choose an English layout and another installed layout.
 - Conversion requires both layouts to expose Unicode keyboard-layout data through macOS. Input methods that do not expose that data cannot be converted.
-- The app relies on Accessibility and synthesized keyboard events. Conversion may not work in applications or fields that reject those events or do not expose a usable focused text element.
+- The app relies on Accessibility and synthesized keyboard events. Selected-text conversion may not work in applications or fields that reject both synthesized Copy and Unicode input.
 - The optional cursor flag appears only where Accessibility provides the text-cursor bounds.
 
 ### Privacy and local state
 
 - The current source contains no networking, updater or telemetry code.
 - Typed text is not written to disk. Preferences such as selected layouts and enabled options are stored in `UserDefaults`.
+- When Accessibility cannot read a selection, the previous clipboard contents are held in memory, Cmd+C/Cmd+V are used to replace the selected text, and the previous contents are restored immediately afterwards.
 - The current key-code buffer is cleared after 15 seconds without a new key event, and also when monitoring stops or the input context becomes unsafe or changes.
 - Text retained for reversing the last conversion is cleared after 5 seconds.
 - Input is rejected when macOS Secure Event Input is active, when Accessibility identifies protected content, and in a small built-in blocklist of password managers and Apple remote-session applications.
@@ -87,7 +88,7 @@ RuSwitcher **не определяет и не исправляет ошибоч
 - Отслеживает события клавиатуры, пока RuSwitcher включён.
 - Хранит в памяти коды клавиш текущей последовательности. После пробела также может конвертировать предыдущую последовательность, сохранив пробелы.
 - Сопоставляет физические клавиши двух настроенных раскладок через системный API `UCKeyTranslate`.
-- Отправляет Backspace и вставляет сконвертированный Unicode-текст напрямую. Системный буфер обмена не используется.
+- Отправляет Backspace и вставляет сконвертированный Unicode-текст напрямую. Для выделенного текста сначала используется Accessibility, а если приложение не раскрывает выделение — кратковременный fallback через Cmd+C.
 - Позволяет повторным нажатием триггера отменить последнюю конвертацию, пока доступно кратковременное состояние отмены.
 - Позволяет выбрать любую установленную раскладку из меню в строке меню.
 - Опционально запоминает активную раскладку отдельно для каждого приложения.
@@ -101,13 +102,14 @@ RuSwitcher **не определяет и не исправляет ошибоч
 - Конвертация только ручная: словарного определения и автоматического исправления нет.
 - Для конвертации одновременно используются две раскладки. Их можно выбрать в Настройках; если они не выбраны, программа пытается найти английскую и ещё одну установленную раскладку.
 - Обе раскладки должны предоставлять macOS данные Unicode-раскладки. Методы ввода, которые не предоставляют эти данные, сконвертировать нельзя.
-- Работа зависит от Accessibility и синтезированных событий клавиатуры. Конвертация может не работать в приложениях или полях, которые отклоняют такие события либо не предоставляют доступный сфокусированный текстовый элемент.
+- Работа зависит от Accessibility и синтезированных событий клавиатуры. Конвертация выделения может не работать в приложениях или полях, которые отклоняют и синтезированный Copy, и Unicode-ввод.
 - Опциональный флаг у курсора появляется только там, где Accessibility возвращает координаты текстового курсора.
 
 ### Конфиденциальность и локальные данные
 
 - В текущем исходном коде нет сетевых запросов, обновлятора и телеметрии.
 - Набранный текст не записывается на диск. В `UserDefaults` сохраняются только настройки, например выбранные раскладки и включённые опции.
+- Если Accessibility не позволяет прочитать выделение, прежнее содержимое clipboard удерживается в памяти, выделение заменяется через Cmd+C/Cmd+V, а прежнее содержимое сразу восстанавливается.
 - Текущий буфер кодов клавиш очищается через 15 секунд без новых нажатий, а также при остановке мониторинга и при смене или небезопасном состоянии контекста ввода.
 - Текст для отмены последней конвертации очищается через 5 секунд.
 - Ввод отбрасывается, если активен macOS Secure Event Input, Accessibility помечает содержимое как защищённое либо активно приложение из небольшого встроенного списка менеджеров паролей и приложений удалённого доступа Apple.

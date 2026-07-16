@@ -259,31 +259,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     LayoutSwitcher.switchToOpposite()
                     self.updateStatusIcon()
                 }
+                let convertBufferedText: () -> Void = { [weak self] in
+                    guard let self else { return }
+                    let keys = self.keyboardMonitor.currentWordKeys
+                    let prevKeys = self.keyboardMonitor.prevWordKeys
+                    let bc = self.keyboardMonitor.boundaryCount
+                    guard let target = self.keyboardMonitor.conversionTarget else {
+                        self.switchLayoutWithoutConversion()
+                        return
+                    }
+                    let scheduled = self.textConverter.convert(
+                        wordKeys: keys,
+                        prevWordKeys: prevKeys,
+                        boundaryCount: bc,
+                        expectedTarget: target,
+                        completion: conversionCompleted
+                    )
+                    if !scheduled {
+                        self.keyboardMonitor.clearSensitiveState()
+                        self.textConverter.clearState()
+                    }
+                }
                 if let selectedTarget = AutoSwitchPolicy.currentSafeFocusedInput(),
                    self.textConverter.convertSelectedText(
                     expectedTarget: selectedTarget,
-                    completion: conversionCompleted
+                    allowClipboardFallback: self.keyboardMonitor.mayHaveSelectedText,
+                    completion: { succeeded in
+                        if succeeded {
+                            conversionCompleted(true)
+                        } else {
+                            convertBufferedText()
+                        }
+                    }
                    ) {
                     return
                 }
-                let keys = self.keyboardMonitor.currentWordKeys
-                let prevKeys = self.keyboardMonitor.prevWordKeys
-                let bc = self.keyboardMonitor.boundaryCount
-                guard let target = self.keyboardMonitor.conversionTarget else {
-                    self.switchLayoutWithoutConversion()
-                    return
-                }
-                let scheduled = self.textConverter.convert(
-                    wordKeys: keys,
-                    prevWordKeys: prevKeys,
-                    boundaryCount: bc,
-                    expectedTarget: target,
-                    completion: conversionCompleted
-                )
-                if !scheduled {
-                    self.keyboardMonitor.clearSensitiveState()
-                    self.textConverter.clearState()
-                }
+                convertBufferedText()
             },
             onAltReconvert: { [weak self] in
                 guard let self else { return }

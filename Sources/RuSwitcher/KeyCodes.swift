@@ -3,6 +3,7 @@ import Foundation
 /// Виртуальные коды клавиш (macOS virtual key codes), используемые при разборе
 /// ввода и симуляции нажатий. Раньше были разбросаны по коду «магическими» числами.
 enum KC {
+    static let letterA: UInt16 = 0   // Cmd+A — выделить всё
     static let letterC: UInt16 = 8   // Cmd+C — копировать
     static let letterV: UInt16 = 9   // Cmd+V — вставить
     static let enter: UInt16 = 36

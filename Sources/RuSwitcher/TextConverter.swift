@@ -1,9 +1,50 @@
+import AppKit
 import CoreGraphics
 import Foundation
 
-/// Локальная конвертация текста между раскладками без буфера обмена.
+/// Локальная конвертация текста между раскладками. Для выделений сначала используется
+/// Accessibility; clipboard задействуется только как fallback для несовместимых полей.
 @MainActor
 final class TextConverter {
+    private struct PasteboardSnapshot {
+        struct Item {
+            let values: [(type: NSPasteboard.PasteboardType, data: Data)]
+        }
+
+        let items: [Item]
+
+        init?(pasteboard: NSPasteboard) {
+            var capturedItems: [Item] = []
+            for item in pasteboard.pasteboardItems ?? [] {
+                var values: [(type: NSPasteboard.PasteboardType, data: Data)] = []
+                for type in item.types {
+                    guard let data = item.data(forType: type) else { return nil }
+                    values.append((type, data))
+                }
+                if !values.isEmpty { capturedItems.append(Item(values: values)) }
+            }
+            items = capturedItems
+        }
+
+        func restore(to pasteboard: NSPasteboard) {
+            let restoredItems: [NSPasteboardItem] = items.map { item in
+                let restored = NSPasteboardItem()
+                for value in item.values {
+                    restored.setData(value.data, forType: value.type)
+                }
+                return restored
+            }
+            pasteboard.clearContents()
+            if !restoredItems.isEmpty {
+                pasteboard.writeObjects(restoredItems)
+            }
+        }
+    }
+
+    private static let selectionProbeType = NSPasteboard.PasteboardType(
+        "com.ruswitcher.selection-probe"
+    )
+
     private var isConverting = false
     private var lastOriginal = ""
     private var lastConverted = ""
@@ -62,16 +103,22 @@ final class TextConverter {
         return true
     }
 
-    /// Конвертирует выделенный пользователем текст. Стандартный AX setter заменяет
-    /// выделение одной операцией, поэтому размер выделения не ограничен буфером
-    /// нажатий и системный буфер обмена не задействуется.
+    /// Конвертирует выделенный пользователем текст. Если приложение не публикует
+    /// выделение через Accessibility, кратковременно использует Cmd+C/Cmd+V и
+    /// восстанавливает прежний clipboard сразу после замены выделения.
     func convertSelectedText(
         expectedTarget: AutoSwitchPolicy.FocusedInput,
+        allowClipboardFallback: Bool,
         completion: @escaping (Bool) -> Void
     ) -> Bool {
         guard !isConverting,
-              let target = captureSafeTarget(matching: expectedTarget),
-              let selection = AutoSwitchPolicy.selectedText(in: target) else { return false }
+              let target = captureSafeTarget(matching: expectedTarget) else { return false }
+
+        guard let selection = AutoSwitchPolicy.selectedText(in: target) else {
+            guard allowClipboardFallback else { return false }
+            beginClipboardSelectionConversion(target: target, completion: completion)
+            return true
+        }
 
         let converted = DynamicKeyMapping.convert(selection.text)
         isConverting = true
@@ -94,6 +141,172 @@ final class TextConverter {
         scheduleSensitiveStateClear()
         completion(true)
         return true
+    }
+
+    private func beginClipboardSelectionConversion(
+        target: AutoSwitchPolicy.FocusedInput,
+        completion: @escaping (Bool) -> Void
+    ) {
+        injectionGeneration &+= 1
+        let generation = injectionGeneration
+        injectionTask?.cancel()
+        isConverting = true
+
+        injectionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let pasteboard = NSPasteboard.general
+            guard let snapshot = PasteboardSnapshot(pasteboard: pasteboard) else {
+                self.finishClipboardSelectionConversion(
+                    generation: generation,
+                    succeeded: false,
+                    completion: completion
+                )
+                return
+            }
+            var ownedChangeCount: Int?
+
+            defer {
+                if let ownedChangeCount,
+                   pasteboard.changeCount == ownedChangeCount {
+                    snapshot.restore(to: pasteboard)
+                }
+            }
+
+            guard self.targetIsStillSafe(target, generation: generation) else {
+                self.finishClipboardSelectionConversion(
+                    generation: generation,
+                    succeeded: false,
+                    completion: completion
+                )
+                return
+            }
+
+            pasteboard.clearContents()
+            guard pasteboard.setData(
+                Data([0x52, 0x55, 0x53]),
+                forType: Self.selectionProbeType
+            ) else {
+                snapshot.restore(to: pasteboard)
+                self.finishClipboardSelectionConversion(
+                    generation: generation,
+                    succeeded: false,
+                    completion: completion
+                )
+                return
+            }
+            ownedChangeCount = pasteboard.changeCount
+
+            guard self.targetIsStillSafe(target, generation: generation),
+                  self.simKey(keyCode: KC.letterC, flags: .maskCommand) else {
+                self.finishClipboardSelectionConversion(
+                    generation: generation,
+                    succeeded: false,
+                    completion: completion
+                )
+                return
+            }
+
+            var selectedText: String?
+            for _ in 0..<25 {
+                guard await self.pause(nanoseconds: 10_000_000) else { break }
+                let currentChangeCount = pasteboard.changeCount
+                if currentChangeCount != ownedChangeCount {
+                    ownedChangeCount = currentChangeCount
+                    selectedText = pasteboard.string(forType: .string)
+                    break
+                }
+            }
+
+            guard let original = selectedText, !original.isEmpty,
+                  let expectedChangeCount = ownedChangeCount,
+                  pasteboard.changeCount == expectedChangeCount else {
+                self.finishClipboardSelectionConversion(
+                    generation: generation,
+                    succeeded: false,
+                    completion: completion
+                )
+                return
+            }
+
+            let converted = DynamicKeyMapping.convert(original)
+            guard self.targetIsStillSafe(target, generation: generation) else {
+                self.finishClipboardSelectionConversion(
+                    generation: generation,
+                    succeeded: false,
+                    completion: completion
+                )
+                return
+            }
+
+            pasteboard.clearContents()
+            guard pasteboard.setString(converted, forType: .string) else {
+                self.finishClipboardSelectionConversion(
+                    generation: generation,
+                    succeeded: false,
+                    completion: completion
+                )
+                return
+            }
+            ownedChangeCount = pasteboard.changeCount
+
+            guard self.targetIsStillSafe(target, generation: generation),
+                  self.simKey(keyCode: KC.letterV, flags: .maskCommand) else {
+                self.finishClipboardSelectionConversion(
+                    generation: generation,
+                    succeeded: false,
+                    completion: completion
+                )
+                return
+            }
+
+            // CGEventPost ставит событие в очередь. Даже при отмене задачи держим
+            // сконвертированный clipboard до доставки Cmd+V, затем восстанавливаем.
+            await self.waitForPasteDelivery()
+            if let expectedChangeCount = ownedChangeCount,
+               pasteboard.changeCount == expectedChangeCount {
+                snapshot.restore(to: pasteboard)
+            }
+            ownedChangeCount = nil
+
+            guard self.targetIsStillSafe(target, generation: generation) else {
+                self.finishClipboardSelectionConversion(
+                    generation: generation,
+                    succeeded: false,
+                    completion: completion
+                )
+                return
+            }
+
+            self.lastOriginal = original
+            self.lastConverted = converted
+            self.lastTarget = target
+            self.scheduleSensitiveStateClear()
+            self.finishClipboardSelectionConversion(
+                generation: generation,
+                succeeded: true,
+                completion: completion
+            )
+        }
+    }
+
+    private func finishClipboardSelectionConversion(
+        generation: UInt,
+        succeeded: Bool,
+        completion: (Bool) -> Void
+    ) {
+        guard generation == injectionGeneration else { return }
+        injectionTask = nil
+        isConverting = false
+        if !succeeded { eraseRetainedText() }
+        completion(succeeded)
+    }
+
+    private func waitForPasteDelivery() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+                continuation.resume()
+            }
+        }
     }
 
     /// Повторная конвертация сразу после предыдущей операции.

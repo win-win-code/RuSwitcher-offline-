@@ -72,6 +72,9 @@ final class KeyboardMonitor: @unchecked Sendable {
         if !prevWordKeys.isEmpty, boundaryCount > 0 { return prevWordTarget }
         return nil
     }
+    /// Для clipboard-fallback помним только факт явного жеста выделения, но не текст.
+    private(set) var mayHaveSelectedText = false
+    private var leftMouseDownLocation: CGPoint?
     /// issue #7: взводится при смене раскладки → на первой букве играем звук раскладки.
     var soundArmed = false
 
@@ -114,6 +117,8 @@ final class KeyboardMonitor: @unchecked Sendable {
             (1 << CGEventType.keyDown.rawValue)
             | (1 << CGEventType.flagsChanged.rawValue)
             | (1 << CGEventType.leftMouseDown.rawValue)
+            | (1 << CGEventType.leftMouseDragged.rawValue)
+            | (1 << CGEventType.leftMouseUp.rawValue)
             | (1 << CGEventType.rightMouseDown.rawValue)
             | (1 << CGEventType.otherMouseDown.rawValue)
 
@@ -174,6 +179,8 @@ final class KeyboardMonitor: @unchecked Sendable {
         currentWordTarget = nil
         prevWordTarget = nil
         keysTypedSinceConversion = false
+        mayHaveSelectedText = false
+        leftMouseDownLocation = nil
     }
 
     private func fullReset() {
@@ -200,6 +207,8 @@ final class KeyboardMonitor: @unchecked Sendable {
         triggerPressTime = nil
         lastTapTime = nil
         keysTypedSinceConversion = true
+        mayHaveSelectedText = false
+        leftMouseDownLocation = nil
         fullReset()
     }
 
@@ -227,11 +236,37 @@ final class KeyboardMonitor: @unchecked Sendable {
         if let eventTap { CGEvent.tapEnable(tap: eventTap, enable: true) }
     }
 
-    /// Сброс буфера при клике мышью — иначе backspace перепечатки сотрёт не то
-    /// (курсор мог уехать в другое место).
-    fileprivate func resetBuffersOnClick() {
-        clearSensitiveState()
-        if caretFlagEnabled { DispatchQueue.main.async { [weak self] in self?.onUserInput?() } }   // issue #10: клик прячет флаг у каретки
+    /// Клик сбрасывает буфер слова; drag, мультиклик и Shift-клик помечают явное
+    /// выделение для редакторов, которые не публикуют его через Accessibility.
+    fileprivate func handleMouseEvent(type: CGEventType, event: CGEvent) {
+        switch type {
+        case .leftMouseDown:
+            clearSensitiveState()
+            leftMouseDownLocation = event.location
+            let clickCount = event.getIntegerValueField(.mouseEventClickState)
+            mayHaveSelectedText = clickCount >= 2 || event.flags.contains(.maskShift)
+            if caretFlagEnabled {
+                DispatchQueue.main.async { [weak self] in self?.onUserInput?() }
+            }
+
+        case .leftMouseDragged:
+            guard let start = leftMouseDownLocation else { return }
+            let dx = event.location.x - start.x
+            let dy = event.location.y - start.y
+            if dx * dx + dy * dy >= 4 { mayHaveSelectedText = true }
+
+        case .leftMouseUp:
+            leftMouseDownLocation = nil
+
+        case .rightMouseDown, .otherMouseDown:
+            clearSensitiveState()
+            if caretFlagEnabled {
+                DispatchQueue.main.async { [weak self] in self?.onUserInput?() }
+            }
+
+        default:
+            break
+        }
     }
 
     // MARK: - Event Handling
@@ -254,6 +289,19 @@ final class KeyboardMonitor: @unchecked Sendable {
         keysTypedSinceConversion = true
         scheduleIdleClear()
         if caretFlagEnabled { DispatchQueue.main.async { [weak self] in self?.onUserInput?() } }   // issue #10: спрятать флаг при печати
+
+        // Явные клавиатурные жесты выделения нужны только для clipboard-fallback.
+        // Cmd+C сохраняет выделение; другие команды считаем потенциально меняющими его.
+        if flags.contains(.maskCommand), keyCode == KC.letterA {
+            mayHaveSelectedText = true
+            fullReset()
+            return
+        }
+        if flags.contains(.maskCommand), keyCode == KC.letterC {
+            fullReset()
+            return
+        }
+        mayHaveSelectedText = false
 
         // Структурные клавиши обрабатываем ВСЕГДА, даже если в flags остался
         // «грязный» модификатор (stale .maskAlternate и т.п.) — иначе счётчик
@@ -282,6 +330,7 @@ final class KeyboardMonitor: @unchecked Sendable {
 
         // Стрелки (Left…Up) — полный сброс
         if keyCode >= KC.left && keyCode <= KC.up {
+            mayHaveSelectedText = flags.contains(.maskShift)
             fullReset()
             return
         }
@@ -462,8 +511,9 @@ private func keyboardCallback(
         return Unmanaged.passUnretained(event)
     }
 
-    if type == .leftMouseDown || type == .rightMouseDown || type == .otherMouseDown {
-        monitor.resetBuffersOnClick()
+    if type == .leftMouseDown || type == .leftMouseDragged || type == .leftMouseUp
+        || type == .rightMouseDown || type == .otherMouseDown {
+        monitor.handleMouseEvent(type: type, event: event)
         return Unmanaged.passUnretained(event)
     }
 

@@ -152,11 +152,25 @@ enum AutoSwitchPolicy {
                range.location != kCFNotFound,
                range.length > 0 {
                 var textRaw: AnyObject?
-                if AXUIElementCopyAttributeValue(
+                let selectedTextResult = AXUIElementCopyAttributeValue(
                     element,
                     kAXSelectedTextAttribute as CFString,
                     &textRaw
-                ) == .success,
+                )
+                if selectedTextResult == .success,
+                   let text = textRaw as? String,
+                   !text.isEmpty {
+                    return SelectedText(text: text, range: range)
+                }
+
+                textRaw = nil
+                if let rangeArgument = AXValueCreate(.cfRange, &range),
+                   AXUIElementCopyParameterizedAttributeValue(
+                        element,
+                        kAXStringForRangeParameterizedAttribute as CFString,
+                        rangeArgument,
+                        &textRaw
+                   ) == .success,
                    let text = textRaw as? String,
                    !text.isEmpty {
                     return SelectedText(text: text, range: range)
