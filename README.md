@@ -30,7 +30,7 @@ RuSwitcher does **not** detect or correct wrong-layout words automatically. It a
 - Optionally shows a layout flag near the text cursor, plays a sound after a layout change, uses a monochrome menu-bar badge, and starts at login.
 - Provides interface translations for 16 languages.
 
-The conversion trigger can be Option, Command, Control or Shift; the left/right side and single/double tap can be configured. The available two-key triggers are Command+Shift, Control+Shift, Command+Option and Control+Option.
+The conversion trigger can be Option, Command, Control, Shift or Caps Lock; the left/right side and single/double tap can be configured. The available two-key triggers are Command+Shift, Control+Shift, Command+Option and Control+Option.
 
 ### Limits
 
@@ -94,7 +94,7 @@ RuSwitcher **не определяет и не исправляет ошибоч
 - Опционально показывает флаг раскладки у текстового курсора, воспроизводит звук после смены раскладки, использует монохромную иконку в строке меню и запускается при входе в систему.
 - Содержит переводы интерфейса на 16 языков.
 
-Триггером может быть Option, Command, Control или Shift; настраиваются левая/правая сторона и одиночное/двойное нажатие. Доступные комбинации из двух клавиш: Command+Shift, Control+Shift, Command+Option и Control+Option.
+Триггером может быть Option, Command, Control, Shift или Caps Lock; настраиваются левая/правая сторона и одиночное/двойное нажатие. Доступные комбинации из двух клавиш: Command+Shift, Control+Shift, Command+Option и Control+Option.
 
 ### Ограничения
 

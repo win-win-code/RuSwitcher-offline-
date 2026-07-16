@@ -43,8 +43,6 @@ struct TriggerConfig {
         case "control+shift":  kind = .combo(.maskControl, .maskShift)
         case "command+option": kind = .combo(.maskCommand, .maskAlternate)
         case "control+option": kind = .combo(.maskControl, .maskAlternate)
-        // ТЕХДОЛГ: нативный Caps Lock убран из UI (нестабилен — HID-дебаунс/тоггл,
-        // нужен HID-драйвер уровня Karabiner). Код consume-пути оставлен на будущее.
         case "capsLock": kind = .capsLock
         default:        kind = .modifier(mask: .maskAlternate, left: KC.leftOption, right: KC.rightOption)
         }

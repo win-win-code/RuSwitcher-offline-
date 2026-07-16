@@ -277,7 +277,7 @@ final class SettingsWindowController {
             ("command", "Command ⌘"),
             ("control", "Control ⌃"),
             ("shift", "Shift ⇧"),
-            // Caps Lock убран: нативный перехват нестабилен (HID-дебаунс/тоггл) — см. техдолг.
+            ("capsLock", "Caps Lock ⇪"),
         ]
         // issue #12: комбо двух модификаторов (привычный по Windows стиль Alt+Shift).
         let comboItems: [(key: String, title: String)] = [

@@ -20,7 +20,16 @@ enum AutoSwitchPolicy {
               let app = NSWorkspace.shared.frontmostApplication else { return nil }
 
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
-        AXUIElementSetMessagingTimeout(axApp, 0.05)
+        // Chromium и Electron (включая Gemini в браузере и приложение ChatGPT)
+        // создают дерево Accessibility лениво. Без этого focused element часто
+        // недоступен, хотя пользователь печатает в обычном, незащищённом поле.
+        // Атрибут идемпотентен и игнорируется приложениями, которые его не знают.
+        AXUIElementSetMessagingTimeout(axApp, 0.15)
+        AXUIElementSetAttributeValue(
+            axApp,
+            "AXManualAccessibility" as CFString,
+            kCFBooleanTrue
+        )
         var focusedRaw: AnyObject?
         guard AXUIElementCopyAttributeValue(
             axApp,
@@ -29,7 +38,7 @@ enum AutoSwitchPolicy {
         ) == .success, let focusedRaw else { return nil }
 
         let focused = focusedRaw as! AXUIElement
-        AXUIElementSetMessagingTimeout(focused, 0.05)
+        AXUIElementSetMessagingTimeout(focused, 0.15)
         return FocusedInput(
             processIdentifier: app.processIdentifier,
             bundleIdentifier: app.bundleIdentifier,
