@@ -5,64 +5,61 @@
 </p>
 
 <p align="center">
-  <b>Lightweight keyboard layout switcher for macOS</b><br>
-  Free and open-source alternative to PuntoSwitcher
+  A menu-bar utility for manually converting recently typed text between two keyboard layouts on macOS.
 </p>
 
 <p align="center">
   <a href="#english">English</a> · <a href="#русский">Русский</a>
 </p>
 
----
-
 ## English
 
-Typed `ghbdtn` when you meant `привет`? Just tap **Option ⌥** and RuSwitcher converts the last word into the right layout — typing it directly, no copy-paste. Works with any pair of installed keyboard layouts — Russian, Ukrainian, Belarusian, German, French, and more. The trigger is fully configurable (a single key or a two-key combo).
+RuSwitcher converts the last typed word or key sequence after you press a configured trigger. For example, if you type `ghbdtn` in an English layout and press the trigger, the app can replace it with `привет` and switch to the other configured layout.
 
-### How it works
+RuSwitcher does **not** detect or correct wrong-layout words automatically. It acts only when you press the trigger.
 
-| Action | Result |
-|---|---|
-| Type a word, tap **Option ⌥** | Last typed word is converted |
-| Tap **Option ⌥** again | Reverse conversion (undo) |
+### What the current code does
 
-The trigger is configurable — **Option**, **Command**, **Control** or **Shift** (left or right side, single or double-tap), or a **two-key combo** (⌘+⇧, ⌃+⇧, ⌘+⌥, ⌃+⌥) for the Windows-style Alt+Shift feel.
+- Monitors keyboard events while RuSwitcher is enabled.
+- Keeps key codes for the current sequence in memory. After a space, it can also convert the preceding sequence and preserve the spaces.
+- Uses the macOS `UCKeyTranslate` API to map the same physical keys between two configured layouts.
+- Sends Backspace events and inserts the converted Unicode text directly. It does not use the system clipboard.
+- Allows a second trigger press to reverse the last conversion while the short-lived undo state is still available.
+- Lets you select any installed layout from the menu-bar menu.
+- Optionally remembers the active layout separately for each application.
+- Optionally shows a layout flag near the text cursor, plays a sound after a layout change, uses a monochrome menu-bar badge, and starts at login.
+- Provides interface translations for 16 languages.
 
-### Layout flag at the cursor (beta — new in 2.6)
+The conversion trigger can be Option, Command, Control or Shift; the left/right side and single/double tap can be configured. The available two-key triggers are Command+Shift, Control+Shift, Command+Option and Control+Option.
 
-After you switch layout, RuSwitcher can briefly show the layout flag **right next to the text cursor** — so you see which layout you're in without glancing at the menu bar. It hides as you start typing. Turn it on in the menu or Settings (off by default). It works wherever the app exposes the cursor position via Accessibility (native apps and most text fields); a few apps that draw their own text (e.g. the VS Code editor) don't expose it — there macOS's own input indicator covers the gap.
+### Limits
 
-### Features
+- Conversion is manual; there is no dictionary-based or automatic correction.
+- Only two layouts are used for conversion at a time. They can be selected in Settings; if they are not selected, the app tries to choose an English layout and another installed layout.
+- Conversion requires both layouts to expose Unicode keyboard-layout data through macOS. Input methods that do not expose that data cannot be converted.
+- The app relies on Accessibility and synthesized keyboard events. Conversion may not work in applications or fields that reject those events or do not expose a usable focused text element.
+- The optional cursor flag appears only where Accessibility provides the text-cursor bounds.
 
-- **Any two layouts** — configure any pair from your installed system layouts. No hardcoded tables.
-- **Switch layout from the menu** *(new in 2.6.1)* — pick any installed layout right from the menu-bar menu (flag, name, a check on the current one) and click to switch.
-- **Configurable trigger** — Option, Command, Control or Shift (left/right, single/double-tap), or a two-key combo like ⌘+⇧.
-- **Layout sound (optional)** — a short sound on the first letter after a layout change, so you *hear* which layout you're in.
-- **Layout flag at the cursor (beta)** — briefly show the layout flag next to the text cursor right after a switch.
-- **Monochrome menu-bar icon (optional)** *(new in 2.6.1)* — a system-style `РУ/EN` badge instead of the colored flag; adapts to light/dark automatically. Off by default.
-- **Universal binary** — runs natively on both Apple Silicon and Intel Macs.
-- **Clipboard-free** — the converted word is typed directly via synthesized Unicode. The global clipboard is never read or changed.
-- **Tap again to undo** — reverse conversion if you changed your mind.
-- **Per-app layout memory** — remembers the active layout for each application and restores it when you switch back.
-- **16 interface languages** — English, Русский, Українська, Беларуская, Deutsch, Français, Español, Português, Polski, 中文, 日本語, 한국어, Ελληνικά, Български, Հայերեն, ქართული.
-- **Auto-start at login** — set and forget.
-- **Minimal footprint** — no Electron, no web views, pure Swift + AppKit.
-- **Offline runtime** — no network requests, updater, telemetry, external links, remote-desktop mode, or file logging.
+### Privacy and local state
 
-### Privacy and sensitive input
+- The current source contains no networking, updater or telemetry code.
+- Typed text is not written to disk. Preferences such as selected layouts and enabled options are stored in `UserDefaults`.
+- The current key-code buffer is cleared after 15 seconds without a new key event, and also when monitoring stops or the input context becomes unsafe or changes.
+- Text retained for reversing the last conversion is cleared after 5 seconds.
+- Input is rejected when macOS Secure Event Input is active, when Accessibility identifies protected content, and in a small built-in blocklist of password managers and Apple remote-session applications.
+- Older RuSwitcher log files and settings from the removed dictionary-based conversion feature are deleted on launch.
 
-- Password entry identified by macOS Secure Event Input or protected Accessibility attributes is discarded before any key is buffered.
-- Turning RuSwitcher off stops the keyboard event tap and clears its in-memory buffers.
-- Conversion never uses the global clipboard, so text cannot enter Universal Clipboard or clipboard managers through RuSwitcher.
-- Dictionary-based automatic conversion was removed, so words are never passed to macOS or third-party spelling services.
-- The app does not write typed text or diagnostic logs to disk. Legacy logs from older versions are removed on launch.
-- The in-memory state used for immediate undo is cleared after five seconds.
+These protections describe the current implementation; they are not a guarantee against a compromised operating system or a custom password field that macOS does not identify as protected.
 
-No software can promise absolute safety on a compromised operating system or in a custom password field that does not enable macOS Secure Event Input. RuSwitcher therefore makes a narrower, verifiable guarantee: its runtime contains no networking or data-export feature, and known protected input is rejected locally.
+### Requirements and permissions
 
-### Installation
+- macOS 13 or later.
+- Accessibility permission, used to verify the focused element and insert converted text safely.
+- Input Monitoring permission, used to observe keyboard events.
 
-**Build from source**
+RuSwitcher includes a permission wizard, but the user must grant the permissions in macOS System Settings.
+
+### Build from source
 
 ```bash
 git clone https://github.com/win-win-code/RuSwitcher-offline-.git
@@ -71,90 +68,62 @@ bash build_app.sh
 cp -R RuSwitcher.app /Applications/
 ```
 
-Requires macOS 13+ and Xcode Command Line Tools.
-
-### Permissions
-
-On first launch, RuSwitcher requests two macOS permissions:
-
-1. **Accessibility** — to identify protected fields and type corrected text.
-2. **Input Monitoring** — to detect keyboard events.
-
-The app adds itself to the permission lists automatically — you only need to flip the toggles. The built-in permission wizard walks you through it step by step.
-
-### Technical details
-
-- `CGEventTap` (passive, listen-only) for keyboard monitoring.
-- `UCKeyTranslate` (Carbon) for dynamic character mapping between any layout pair.
-- `CGEvent.keyboardSetUnicodeString` to type the converted text directly — no clipboard, no pasteboard side effects.
-- `CGEventSource.userData` marker to filter the app's own simulated events.
-- `AXUIElement` API for focused element detection.
-- `SMAppService` for login item management.
-- No hardcoded layout tables — works with any installed layouts.
-
-### Settings
-
-Access via the menu bar icon → **Settings** (⌘,).
-
-- **General** — conversion trigger (single key or combo), per-app layout memory, launch at login, interface language, layout pair.
-- **About** — application name and version only.
-
-The menu-bar menu also has quick toggles for Layout sound and Flag at cursor.
+The project uses Swift 6, AppKit, Carbon, CoreGraphics and ServiceManagement. A compatible Xcode Command Line Tools installation is required. The build script signs the local app with an available code-signing identity, or ad hoc if none is available.
 
 ### License
 
-[MIT](LICENSE) — free to use, modify, and distribute.
+[MIT](LICENSE)
 
 ---
 
 ## Русский
 
-Набрали `ghbdtn` вместо `привет`? Просто нажмите **Option ⌥** — и RuSwitcher сконвертирует последнее слово в правильную раскладку, печатая его напрямую, без копипасты. Работает с любой парой установленных раскладок — русская, украинская, белорусская, немецкая, французская и другие. Триггер настраивается (одна клавиша или комбо из двух).
+RuSwitcher конвертирует последнее набранное слово или последовательность клавиш после нажатия настроенного триггера. Например, если набрать `ghbdtn` в английской раскладке и нажать триггер, программа может заменить текст на `привет` и переключить раскладку на вторую настроенную.
 
-### Как работает
+RuSwitcher **не определяет и не исправляет ошибочную раскладку автоматически**. Конвертация запускается только по нажатию триггера.
 
-| Действие | Результат |
-|---|---|
-| Набрать слово, нажать **Option ⌥** | Последнее слово сконвертировано |
-| Нажать **Option ⌥** повторно | Обратная конвертация (отмена) |
+### Что делает текущая версия кода
 
-Триггер настраивается — **Option**, **Command**, **Control** или **Shift** (левый или правый, одиночный или двойной тап), либо **комбо из двух клавиш** (⌘+⇧, ⌃+⇧, ⌘+⌥, ⌃+⌥) — в стиле привычного Alt+Shift.
+- Отслеживает события клавиатуры, пока RuSwitcher включён.
+- Хранит в памяти коды клавиш текущей последовательности. После пробела также может конвертировать предыдущую последовательность, сохранив пробелы.
+- Сопоставляет физические клавиши двух настроенных раскладок через системный API `UCKeyTranslate`.
+- Отправляет Backspace и вставляет сконвертированный Unicode-текст напрямую. Системный буфер обмена не используется.
+- Позволяет повторным нажатием триггера отменить последнюю конвертацию, пока доступно кратковременное состояние отмены.
+- Позволяет выбрать любую установленную раскладку из меню в строке меню.
+- Опционально запоминает активную раскладку отдельно для каждого приложения.
+- Опционально показывает флаг раскладки у текстового курсора, воспроизводит звук после смены раскладки, использует монохромную иконку в строке меню и запускается при входе в систему.
+- Содержит переводы интерфейса на 16 языков.
 
-### Флаг у курсора (бета — новое в 2.6)
+Триггером может быть Option, Command, Control или Shift; настраиваются левая/правая сторона и одиночное/двойное нажатие. Доступные комбинации из двух клавиш: Command+Shift, Control+Shift, Command+Option и Control+Option.
 
-После переключения раскладки RuSwitcher может ненадолго показать флаг раскладки **прямо у текстового курсора** — видно, в какой раскладке печатаете, не глядя в меню-бар. Прячется, как только начинаете печатать. Включается в меню или Настройках (по умолчанию выключено). Работает там, где приложение отдаёт позицию курсора через Accessibility (нативные приложения и большинство текстовых полей); некоторые приложения, рисующие текст сами (например, редактор VS Code), позицию не отдают — там раскладку показывает встроенный индикатор macOS.
+### Ограничения
 
-### Возможности
+- Конвертация только ручная: словарного определения и автоматического исправления нет.
+- Для конвертации одновременно используются две раскладки. Их можно выбрать в Настройках; если они не выбраны, программа пытается найти английскую и ещё одну установленную раскладку.
+- Обе раскладки должны предоставлять macOS данные Unicode-раскладки. Методы ввода, которые не предоставляют эти данные, сконвертировать нельзя.
+- Работа зависит от Accessibility и синтезированных событий клавиатуры. Конвертация может не работать в приложениях или полях, которые отклоняют такие события либо не предоставляют доступный сфокусированный текстовый элемент.
+- Опциональный флаг у курсора появляется только там, где Accessibility возвращает координаты текстового курсора.
 
-- **Любая пара раскладок** — настраивается любая пара из установленных в системе. Без захардкоженных таблиц.
-- **Переключение раскладки из меню** *(новое в 2.6.1)* — выберите любую установленную раскладку прямо в меню-баре (флаг, имя, галочка на текущей) и кликните для переключения.
-- **Настраиваемый триггер** — Option, Command, Control или Shift (левый/правый, одиночный/двойной тап), либо комбо из двух клавиш вроде ⌘+⇧.
-- **Звук раскладки (опционально)** — короткий звук на первой букве после смены раскладки, чтобы *на слух* понимать раскладку.
-- **Флаг у курсора (бета)** — ненадолго показывает флаг раскладки у текстового курсора сразу после переключения.
-- **Монохромная иконка в меню-баре (опционально)** *(новое в 2.6.1)* — системная плашка `РУ/EN` вместо цветного флага, сама подстраивается под светлую/тёмную тему. По умолчанию выключена.
-- **Universal-сборка** — нативно на Apple Silicon и Intel.
-- **Без буфера обмена** — конвертированное слово печатается напрямую через синтез Unicode. Глобальный буфер никогда не читается и не изменяется.
-- **Повторное нажатие — отмена** — обратная конвертация, если передумали.
-- **Память раскладки по приложению** — запоминает активную раскладку для каждой программы и восстанавливает при возврате.
-- **16 языков интерфейса** — English, Русский, Українська, Беларуская, Deutsch, Français, Español, Português, Polski, 中文, 日本語, 한국어, Ελληνικά, Български, Հայերեն, ქართული.
-- **Автозапуск при входе** — настроил и забыл.
-- **Минимальное потребление** — без Electron и веб-вьюх, чистый Swift + AppKit.
-- **Полностью офлайн во время работы** — без сетевых запросов, автообновления, телеметрии, внешних ссылок, удалённого режима и файловых логов.
+### Конфиденциальность и локальные данные
 
-### Конфиденциальность и чувствительный ввод
+- В текущем исходном коде нет сетевых запросов, обновлятора и телеметрии.
+- Набранный текст не записывается на диск. В `UserDefaults` сохраняются только настройки, например выбранные раскладки и включённые опции.
+- Текущий буфер кодов клавиш очищается через 15 секунд без новых нажатий, а также при остановке мониторинга и при смене или небезопасном состоянии контекста ввода.
+- Текст для отмены последней конвертации очищается через 5 секунд.
+- Ввод отбрасывается, если активен macOS Secure Event Input, Accessibility помечает содержимое как защищённое либо активно приложение из небольшого встроенного списка менеджеров паролей и приложений удалённого доступа Apple.
+- При запуске удаляются старые логи RuSwitcher и настройки удалённой словарной конвертации.
 
-- Ввод пароля, отмеченный системным Secure Event Input или защищёнными атрибутами Accessibility, отбрасывается до помещения нажатий в буфер.
-- Выключение RuSwitcher останавливает перехват событий клавиатуры и очищает память приложения.
-- Конверсия никогда не использует глобальный буфер обмена, поэтому текст не попадает через RuSwitcher в Universal Clipboard или clipboard-менеджеры.
-- Словарная автоконверсия удалена: слова не передаются системным или сторонним службам проверки орфографии.
-- Приложение не пишет набранный текст и диагностические логи на диск. Старые логи предыдущих версий удаляются при запуске.
-- Состояние в памяти, нужное для быстрой отмены, очищается через пять секунд.
+Это описание соответствует текущей реализации, но не является гарантией защиты от скомпрометированной операционной системы или нестандартного поля пароля, которое macOS не распознаёт как защищённое.
 
-Ни одна программа не может обещать абсолютную безопасность на скомпрометированной системе или в нестандартном поле пароля, которое не включает Secure Event Input. Поэтому гарантия сформулирована проверяемо: в runtime нет сетевых и экспортирующих данные функций, а известный защищённый ввод отбрасывается локально.
+### Требования и разрешения
 
-### Установка
+- macOS 13 или новее.
+- «Универсальный доступ» (Accessibility) — для проверки сфокусированного элемента и безопасной вставки сконвертированного текста.
+- «Мониторинг ввода» (Input Monitoring) — для отслеживания событий клавиатуры.
 
-**Сборка из исходников**
+В RuSwitcher есть мастер разрешений, но разрешения пользователь выдаёт самостоятельно в Системных настройках macOS.
+
+### Сборка из исходников
 
 ```bash
 git clone https://github.com/win-win-code/RuSwitcher-offline-.git
@@ -163,36 +132,8 @@ bash build_app.sh
 cp -R RuSwitcher.app /Applications/
 ```
 
-Требуется macOS 13+ и Xcode Command Line Tools.
-
-### Разрешения
-
-При первом запуске RuSwitcher запросит два системных разрешения macOS:
-
-1. **Универсальный доступ (Accessibility)** — для определения защищённых полей и печати исправленного текста.
-2. **Мониторинг ввода (Input Monitoring)** — для отслеживания нажатий клавиш.
-
-Программа автоматически добавляется в списки разрешений — вам нужно только включить тумблеры. Встроенный мастер разрешений проведёт по шагам.
-
-### Технические детали
-
-- `CGEventTap` (пассивный, только чтение) для мониторинга клавиатуры.
-- `UCKeyTranslate` (Carbon) для динамического маппинга символов между любой парой раскладок.
-- `CGEvent.keyboardSetUnicodeString` для прямой печати конвертированного текста — без буфера обмена и побочных эффектов с pasteboard.
-- Маркер `CGEventSource.userData` для фильтрации собственных симулированных событий.
-- `AXUIElement` API для определения сфокусированного элемента.
-- `SMAppService` для управления автозапуском.
-- Без захардкоженных таблиц — работает с любыми установленными раскладками.
-
-### Настройки
-
-Доступ через иконку в строке меню → **Настройки** (⌘,).
-
-- **Общие** — триггер конвертации (одна клавиша или комбо), память раскладки по приложению, автозапуск, язык интерфейса, пара раскладок.
-- **О программе** — только название и версия приложения.
-
-В меню в строке меню также есть быстрые тумблеры: «Звук раскладки» и «Флаг у курсора».
+Проект использует Swift 6, AppKit, Carbon, CoreGraphics и ServiceManagement. Нужна совместимая версия Xcode Command Line Tools. Скрипт сборки подписывает локальное приложение доступным сертификатом для подписи кода, а при его отсутствии использует ad-hoc подпись.
 
 ### Лицензия
 
-[MIT](LICENSE) — свободное использование, модификация и распространение.
+[MIT](LICENSE)
