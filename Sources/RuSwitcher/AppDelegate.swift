@@ -253,6 +253,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.textConverter.clearState()
                     return
                 }
+                let conversionCompleted: (Bool) -> Void = { [weak self] succeeded in
+                    guard succeeded, let self else { return }
+                    self.keyboardMonitor.markConverted()
+                    LayoutSwitcher.switchToOpposite()
+                    self.updateStatusIcon()
+                }
+                if let selectedTarget = AutoSwitchPolicy.currentSafeFocusedInput(),
+                   self.textConverter.convertSelectedText(
+                    expectedTarget: selectedTarget,
+                    completion: conversionCompleted
+                   ) {
+                    return
+                }
                 let keys = self.keyboardMonitor.currentWordKeys
                 let prevKeys = self.keyboardMonitor.prevWordKeys
                 let bc = self.keyboardMonitor.boundaryCount
@@ -264,13 +277,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     wordKeys: keys,
                     prevWordKeys: prevKeys,
                     boundaryCount: bc,
-                    expectedTarget: target
-                ) { [weak self] succeeded in
-                    guard succeeded, let self else { return }
-                    self.keyboardMonitor.markConverted()
-                    LayoutSwitcher.switchToOpposite()
-                    self.updateStatusIcon()
-                }
+                    expectedTarget: target,
+                    completion: conversionCompleted
+                )
                 if !scheduled {
                     self.keyboardMonitor.clearSensitiveState()
                     self.textConverter.clearState()

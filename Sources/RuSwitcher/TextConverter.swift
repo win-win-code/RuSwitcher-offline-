@@ -62,6 +62,34 @@ final class TextConverter {
         return true
     }
 
+    /// Конвертирует выделенный пользователем текст. Стандартный AX setter заменяет
+    /// выделение одной операцией, поэтому размер выделения не ограничен буфером
+    /// нажатий и системный буфер обмена не задействуется.
+    func convertSelectedText(
+        expectedTarget: AutoSwitchPolicy.FocusedInput,
+        completion: @escaping (Bool) -> Void
+    ) -> Bool {
+        guard !isConverting,
+              let target = captureSafeTarget(matching: expectedTarget),
+              let selection = AutoSwitchPolicy.selectedText(in: target) else { return false }
+
+        let converted = DynamicKeyMapping.convert(selection.text)
+        isConverting = true
+        defer { isConverting = false }
+
+        guard targetIsSafe(target),
+              AutoSwitchPolicy.replaceSelectedText(selection, in: target, with: converted) else {
+            return false
+        }
+
+        lastOriginal = selection.text
+        lastConverted = converted
+        lastTarget = target
+        scheduleSensitiveStateClear()
+        completion(true)
+        return true
+    }
+
     /// Повторная конвертация сразу после предыдущей операции.
     func reconvert(completion: @escaping (Bool) -> Void) -> Bool {
         guard !isConverting, !lastConverted.isEmpty, let lastTarget else { return false }

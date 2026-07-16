@@ -11,6 +11,24 @@ enum AutoSwitchPolicy {
         let element: AXUIElement?
     }
 
+    /// Текущее выделение в проверенном текстовом поле. Текст живёт только в памяти
+    /// вызывающего кода и нужен для явной ручной конвертации.
+    struct SelectedText {
+        let text: String
+        private let range: CFRange
+
+        fileprivate init(text: String, range: CFRange) {
+            self.text = text
+            self.range = range
+        }
+
+        fileprivate func matches(_ other: SelectedText) -> Bool {
+            text == other.text
+                && range.location == other.range.location
+                && range.length == other.range.length
+        }
+    }
+
     /// Активен ли защищённый ввод (поле пароля, Secure Keyboard Entry в терминале) —
     /// тогда мониторинг и конвертацию НЕ делаем (приватность; пароль не трогаем).
     static var secureInputActive: Bool { IsSecureEventInputEnabled() }
@@ -99,6 +117,60 @@ enum AutoSwitchPolicy {
               let focused = currentFocusedInput() else { return nil }
         if let element = focused.element, isProtectedElement(element) { return nil }
         return focused
+    }
+
+    /// Читает выделенный текст через стандартный Accessibility API. Неиспользуемые
+    /// или пустые выделения не считаются текстом для конвертации.
+    static func selectedText(in focusedInput: FocusedInput) -> SelectedText? {
+        guard let element = focusedInput.element else { return nil }
+        AXUIElementSetMessagingTimeout(element, 0.15)
+
+        var rangeRaw: AnyObject?
+        guard AXUIElementCopyAttributeValue(
+            element,
+            kAXSelectedTextRangeAttribute as CFString,
+            &rangeRaw
+        ) == .success,
+              let rangeValue = rangeRaw,
+              CFGetTypeID(rangeValue) == AXValueGetTypeID() else { return nil }
+
+        var range = CFRange(location: 0, length: 0)
+        guard AXValueGetValue(rangeValue as! AXValue, .cfRange, &range),
+              range.location != kCFNotFound,
+              range.length > 0 else { return nil }
+
+        var textRaw: AnyObject?
+        guard AXUIElementCopyAttributeValue(
+            element,
+            kAXSelectedTextAttribute as CFString,
+            &textRaw
+        ) == .success,
+              let text = textRaw as? String,
+              !text.isEmpty else { return nil }
+
+        return SelectedText(text: text, range: range)
+    }
+
+    /// Проверяет, что пользователь не изменил выделение между чтением и заменой.
+    static func selectedTextMatches(_ selection: SelectedText, in focusedInput: FocusedInput) -> Bool {
+        guard let current = selectedText(in: focusedInput) else { return false }
+        return selection.matches(current)
+    }
+
+    /// Заменяет выделение атомарно через Accessibility, без буфера обмена и серии
+    /// Backspace. Это позволяет поддерживать длинные многострочные выделения.
+    static func replaceSelectedText(
+        _ selection: SelectedText,
+        in focusedInput: FocusedInput,
+        with replacement: String
+    ) -> Bool {
+        guard let element = focusedInput.element,
+              selectedTextMatches(selection, in: focusedInput) else { return false }
+        return AXUIElementSetAttributeValue(
+            element,
+            kAXSelectedTextAttribute as CFString,
+            replacement as CFString
+        ) == .success
     }
 
     /// Дополнительная проверка Accessibility для приложений, которые помечают поле
