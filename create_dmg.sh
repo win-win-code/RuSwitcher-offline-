@@ -3,10 +3,6 @@ set -e
 
 APP_NAME="RuSwitcher"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# Единый источник версии — version.json в корне репозитория.
-VERSION=$(/usr/bin/python3 -c "import json;print(json.load(open('version.json'))['version'])")
-BUILD=$(/usr/bin/python3 -c "import json;print(json.load(open('version.json')).get('build','1'))")
-DMG_NAME="${APP_NAME}-${VERSION}.dmg"
 # Нотаризация: предпочитаем API-ключ App Store Connect — файл на диске, НЕ зависит
 # от Keychain (keychain-профиль уже дважды пропадал: 2026-07-01 и 2026-07-10).
 # Конфиг ключа: ~/.config/ruswitcher/notary.conf (задаёт NOTARY_KEY_FILE,
@@ -63,6 +59,12 @@ fi
 #    Именно так в релиз 2.1.0 попал бандл 2.0.3: имя было 2.1.0, а внутри 2.0.3.
 echo "→ Rebuilding app from source (build_app.sh)..."
 "$SCRIPT_DIR/build_app.sh"
+
+# build_app.sh повышает версию, только когда изменились исходники. Читаем её
+# после сборки, чтобы имя DMG и встроенный Info.plist всегда совпадали.
+VERSION=$(/usr/bin/python3 -c "import json;print(json.load(open('version.json'))['version'])")
+BUILD=$(/usr/bin/python3 -c "import json;print(json.load(open('version.json')).get('build','1'))")
+DMG_NAME="${APP_NAME}-${VERSION}.dmg"
 
 # 0a. Жёсткая проверка: версия в собранном бандле обязана совпадать с version.json,
 #     иначе отказываемся паковать DMG.

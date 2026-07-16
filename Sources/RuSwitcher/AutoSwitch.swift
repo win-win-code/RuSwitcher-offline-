@@ -7,17 +7,26 @@ enum AutoSwitchPolicy {
     struct FocusedInput {
         let processIdentifier: pid_t
         let bundleIdentifier: String?
-        let element: AXUIElement
+        /// nil, если приложение не публикует AX-фокус (часто веб-поля Chromium/Electron).
+        let element: AXUIElement?
     }
 
     /// Активен ли защищённый ввод (поле пароля, Secure Keyboard Entry в терминале) —
     /// тогда мониторинг и конвертацию НЕ делаем (приватность; пароль не трогаем).
     static var secureInputActive: Bool { IsSecureEventInputEnabled() }
 
-    /// Текущий AX-фокус. Ошибки чтения обрабатываются вызывающим fail-closed.
+    /// Текущий фокус ввода. Если приложение не публикует AX-элемент, сохраняем
+    /// identity активного процесса: это позволяет работать в веб-полях, не ослабляя
+    /// проверку Secure Event Input и блокировку известных защищённых приложений.
     static func currentFocusedInput() -> FocusedInput? {
         guard AXIsProcessTrusted(),
               let app = NSWorkspace.shared.frontmostApplication else { return nil }
+
+        let fallback = FocusedInput(
+            processIdentifier: app.processIdentifier,
+            bundleIdentifier: app.bundleIdentifier,
+            element: nil
+        )
 
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
         // Chromium и Electron (включая Gemini в браузере и приложение ChatGPT)
@@ -35,7 +44,7 @@ enum AutoSwitchPolicy {
             axApp,
             kAXFocusedUIElementAttribute as CFString,
             &focusedRaw
-        ) == .success, let focusedRaw else { return nil }
+        ) == .success, let focusedRaw else { return fallback }
 
         let focused = focusedRaw as! AXUIElement
         AXUIElementSetMessagingTimeout(focused, 0.15)
@@ -79,14 +88,16 @@ enum AutoSwitchPolicy {
     }
 
     static func sameIdentity(_ lhs: FocusedInput, _ rhs: FocusedInput) -> Bool {
-        lhs.processIdentifier == rhs.processIdentifier && CFEqual(lhs.element, rhs.element)
+        guard lhs.processIdentifier == rhs.processIdentifier else { return false }
+        guard let lhsElement = lhs.element, let rhsElement = rhs.element else { return true }
+        return CFEqual(lhsElement, rhsElement)
     }
 
     /// Возвращает фокус только если его удалось проверить и он не защищён.
     static func currentSafeFocusedInput() -> FocusedInput? {
         guard !secureInputActive,
-              let focused = currentFocusedInput(),
-              !isProtectedElement(focused.element) else { return nil }
+              let focused = currentFocusedInput() else { return nil }
+        if let element = focused.element, isProtectedElement(element) { return nil }
         return focused
     }
 

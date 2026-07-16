@@ -10,6 +10,59 @@ VERSION_JSON="$PROJECT_DIR/version.json"
 # version.json — единый источник правды. Значения в Info.plist в репо
 # игнорируются: скрипт штампует CFBundleShortVersionString и CFBundleVersion
 # в копию Info.plist внутри собранного бандла.
+# При изменении исходников автоматически повышаем patch-версию и номер сборки.
+# Отпечаток хранится отдельно от самих версий, поэтому повторная сборка одного
+# и того же состояния не меняет номер выпуска.
+/usr/bin/python3 - "$VERSION_JSON" "$PROJECT_DIR" <<'PY'
+import hashlib
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+version_path = Path(sys.argv[1])
+project_path = Path(sys.argv[2])
+
+try:
+    files = subprocess.run(
+        ["git", "-C", str(project_path), "ls-files", "-co", "--exclude-standard"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+except (OSError, subprocess.CalledProcessError):
+    files = [
+        str(path.relative_to(project_path))
+        for path in project_path.rglob("*")
+        if path.is_file()
+        and ".git" not in path.parts
+        and ".build" not in path.parts
+        and "RuSwitcher.app" not in path.parts
+    ]
+
+digest = hashlib.sha256()
+for relative_path in sorted(path for path in files if path != "version.json"):
+    path = project_path / relative_path
+    if not path.is_file():
+        continue
+    digest.update(relative_path.encode())
+    digest.update(b"\0")
+    digest.update(path.read_bytes())
+    digest.update(b"\0")
+source_revision = digest.hexdigest()
+
+data = json.loads(version_path.read_text())
+if data.get("sourceRevision") != source_revision:
+    parts = data["version"].split(".")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        raise SystemExit("ERROR: version must use MAJOR.MINOR.PATCH format")
+    parts[-1] = str(int(parts[-1]) + 1)
+    data["version"] = ".".join(parts)
+    data["build"] = str(int(data.get("build", "0")) + 1)
+    data["sourceRevision"] = source_revision
+    version_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    print(f"→ Version bumped to {data['version']} (build {data['build']})")
+PY
 SHORT_VERSION=$(/usr/bin/python3 -c "import json,sys;print(json.load(open('$VERSION_JSON'))['version'])")
 BUILD_VERSION=$(/usr/bin/python3 -c "import json,sys;print(json.load(open('$VERSION_JSON')).get('build','1'))")
 DEV_TAG=$(/usr/bin/python3 -c "import json,sys;print(json.load(open('$VERSION_JSON')).get('dev',''))")

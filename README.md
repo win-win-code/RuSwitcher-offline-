@@ -68,7 +68,7 @@ bash build_app.sh
 cp -R RuSwitcher.app /Applications/
 ```
 
-The project uses Swift 6, AppKit, Carbon, CoreGraphics and ServiceManagement. A compatible Xcode Command Line Tools installation is required. The build script signs the local app with an available code-signing identity, or ad hoc if none is available.
+The project uses Swift 6, AppKit, Carbon, CoreGraphics and ServiceManagement. A compatible Xcode Command Line Tools installation is required. Each build made after a source change automatically increments the patch version and build number. The build script signs the local app with an available code-signing identity, or ad hoc if none is available.
 
 ### License
 
@@ -132,7 +132,7 @@ bash build_app.sh
 cp -R RuSwitcher.app /Applications/
 ```
 
-Проект использует Swift 6, AppKit, Carbon, CoreGraphics и ServiceManagement. Нужна совместимая версия Xcode Command Line Tools. Скрипт сборки подписывает локальное приложение доступным сертификатом для подписи кода, а при его отсутствии использует ad-hoc подпись.
+Проект использует Swift 6, AppKit, Carbon, CoreGraphics и ServiceManagement. Нужна совместимая версия Xcode Command Line Tools. Каждая сборка после изменения исходников автоматически повышает patch-версию и номер сборки. Скрипт сборки подписывает локальное приложение доступным сертификатом для подписи кода, а при его отсутствии использует ad-hoc подпись.
 
 ### Лицензия
 
