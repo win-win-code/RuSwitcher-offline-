@@ -23,6 +23,7 @@ final class SettingsManager: @unchecked Sendable {
         static let keySound = "com.ruswitcher.keySound"
         static let caretFlag = "com.ruswitcher.caretFlag"
         static let monochromeIcon = "com.ruswitcher.monochromeIcon"
+        static let adaptiveAutoSwitch = "com.ruswitcher.adaptiveAutoSwitch"
     }
 
     private init() {
@@ -142,6 +143,12 @@ final class SettingsManager: @unchecked Sendable {
     var monochromeIcon: Bool {
         get { defaults.bool(forKey: Keys.monochromeIcon) }
         set { defaults.set(newValue, forKey: Keys.monochromeIcon) }
+    }
+
+    /// Локальное обучение на явных конвертациях. По умолчанию выключено.
+    var adaptiveAutoSwitchEnabled: Bool {
+        get { defaults.bool(forKey: Keys.adaptiveAutoSwitch) }
+        set { defaults.set(newValue, forKey: Keys.adaptiveAutoSwitch) }
     }
 
     // MARK: - Login Item

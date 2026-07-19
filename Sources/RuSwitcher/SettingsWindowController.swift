@@ -17,6 +17,7 @@ final class SettingsWindowController {
     var onLanguageChanged: (() -> Void)?
     var onTriggerChanged: (() -> Void)?
     var onCaretFlagChanged: ((Bool) -> Void)?
+    var onAdaptiveAutoSwitchChanged: ((Bool) -> Void)?
 
     func showWindow() {
         if let window {
@@ -105,6 +106,32 @@ final class SettingsWindowController {
         triggerHint.textColor = .secondaryLabelColor
         view.addSubview(triggerHint)
         y -= 48
+
+        let adaptiveAutoSwitch = NSButton(
+            checkboxWithTitle: L10n.settingsAdaptiveAutoSwitch,
+            target: self,
+            action: #selector(adaptiveAutoSwitchChanged)
+        )
+        adaptiveAutoSwitch.frame = NSRect(x: 20, y: y, width: 420, height: 22)
+        adaptiveAutoSwitch.state = SettingsManager.shared.adaptiveAutoSwitchEnabled ? .on : .off
+        view.addSubview(adaptiveAutoSwitch)
+        y -= 24
+
+        let adaptiveHint = NSTextField(wrappingLabelWithString: L10n.settingsAdaptiveAutoSwitchHint)
+        adaptiveHint.frame = NSRect(x: 40, y: y - 42, width: 400, height: 42)
+        adaptiveHint.font = .systemFont(ofSize: 11)
+        adaptiveHint.textColor = .secondaryLabelColor
+        view.addSubview(adaptiveHint)
+        y -= 50
+
+        let clearLearnedWords = NSButton(
+            title: L10n.settingsClearLearnedWords,
+            target: self,
+            action: #selector(clearLearnedWords)
+        )
+        clearLearnedWords.frame = NSRect(x: 40, y: y - 4, width: 260, height: 28)
+        view.addSubview(clearLearnedWords)
+        y -= 42
 
         // Запуск при логине
         let loginCheckbox = NSButton(checkboxWithTitle: L10n.settingsLaunchAtLogin, target: self, action: #selector(launchAtLoginChanged))
@@ -355,6 +382,16 @@ final class SettingsWindowController {
         let enabled = sender.state == .on
         SettingsManager.shared.caretFlag = enabled
         onCaretFlagChanged?(enabled)
+    }
+
+    @objc private func adaptiveAutoSwitchChanged(_ sender: NSButton) {
+        let enabled = sender.state == .on
+        SettingsManager.shared.adaptiveAutoSwitchEnabled = enabled
+        onAdaptiveAutoSwitchChanged?(enabled)
+    }
+
+    @objc private func clearLearnedWords(_ sender: NSButton) {
+        LearnedWordStore.shared.clear()
     }
 
 }

@@ -6,6 +6,13 @@ import Foundation
 /// Accessibility; clipboard задействуется только как fallback для несовместимых полей.
 @MainActor
 final class TextConverter {
+    struct ManualWordConversion {
+        let sourceLayoutID: String
+        let targetLayoutID: String
+        let originalWord: String
+        let convertedWord: String
+    }
+
     private struct PasteboardSnapshot {
         struct Item {
             let values: [(type: NSPasteboard.PasteboardType, data: Data)]
@@ -49,6 +56,7 @@ final class TextConverter {
     private var lastOriginal = ""
     private var lastConverted = ""
     private var lastTarget: AutoSwitchPolicy.FocusedInput?
+    private var lastAutomaticRule: LearnedWordStore.RuleID?
     private var sensitiveStateClearWork: DispatchWorkItem?
     private var injectionTask: Task<Void, Never>?
     private var injectionGeneration: UInt = 0
@@ -64,7 +72,7 @@ final class TextConverter {
     /// Глобальный буфер обмена не используется ни при каких условиях.
     func convert(wordKeys: [TypedKey], prevWordKeys: [TypedKey], boundaryCount: Int,
                  expectedTarget: AutoSwitchPolicy.FocusedInput,
-                 completion: @escaping (Bool) -> Void) -> Bool {
+                 completion: @escaping (Bool, ManualWordConversion?) -> Void) -> Bool {
         guard !isConverting else { return false }
         guard let target = captureSafeTarget(matching: expectedTarget) else {
             clearState()
@@ -89,16 +97,65 @@ final class TextConverter {
         let backspaceCount = keys.count + trailingSpaces
         let insert = pair.converted + spaces
         let erasedText = pair.original + spaces
+        let manualConversion = ManualWordConversion(
+            sourceLayoutID: pair.sourceLayoutID,
+            targetLayoutID: pair.targetLayoutID,
+            originalWord: pair.original,
+            convertedWord: pair.converted
+        )
         lastOriginal = erasedText
         lastConverted = insert
         lastTarget = target
+        lastAutomaticRule = nil
         scheduleSensitiveStateClear()
         beginInjection(
             backspaceCount: backspaceCount,
             insert: insert,
             erasedText: erasedText,
             target: target,
-            completion: completion
+            completion: { succeeded in
+                completion(succeeded, succeeded ? manualConversion : nil)
+            }
+        )
+        return true
+    }
+
+    /// Исправляет слово только если его подпись уже была явно подтверждена пользователем.
+    /// В отличие от ручного пути, не использует ни выделение, ни pasteboard.
+    func convertLearnedWord(
+        wordKeys: [TypedKey],
+        trailingSpaces: Int,
+        expectedTarget: AutoSwitchPolicy.FocusedInput,
+        completion: @escaping (Bool, String?) -> Void
+    ) -> Bool {
+        guard SettingsManager.shared.adaptiveAutoSwitchEnabled,
+              !isConverting,
+              trailingSpaces > 0,
+              let target = captureSafeTarget(matching: expectedTarget),
+              let pair = DynamicKeyMapping.convertKeys(wordKeys),
+              let rule = LearnedWordStore.shared.matchingRule(
+                sourceLayoutID: pair.sourceLayoutID,
+                targetLayoutID: pair.targetLayoutID,
+                targetWord: pair.converted
+              ) else { return false }
+
+        let spaces = String(repeating: " ", count: trailingSpaces)
+        let insert = pair.converted + spaces
+        let erasedText = pair.original + spaces
+        lastOriginal = erasedText
+        lastConverted = insert
+        lastTarget = target
+        lastAutomaticRule = rule
+        scheduleSensitiveStateClear()
+        beginInjection(
+            backspaceCount: wordKeys.count + trailingSpaces,
+            insert: insert,
+            erasedText: erasedText,
+            target: target,
+            completion: { [weak self] succeeded in
+                if !succeeded { self?.lastAutomaticRule = nil }
+                completion(succeeded, succeeded ? pair.targetLayoutID : nil)
+            }
         )
         return true
     }
@@ -113,6 +170,7 @@ final class TextConverter {
     ) -> Bool {
         guard !isConverting,
               let target = captureSafeTarget(matching: expectedTarget) else { return false }
+        lastAutomaticRule = nil
 
         guard let selection = AutoSwitchPolicy.selectedText(in: target) else {
             guard allowClipboardFallback else { return false }
@@ -138,6 +196,7 @@ final class TextConverter {
         lastOriginal = selection.text
         lastConverted = converted
         lastTarget = target
+        lastAutomaticRule = nil
         scheduleSensitiveStateClear()
         completion(true)
         return true
@@ -332,6 +391,13 @@ final class TextConverter {
         return true
     }
 
+    /// Вызывается только после успешной обратной конвертации: правило могло быть
+    /// применено автоматически и теперь должно быть заблокировано до нового обучения.
+    func consumeLastAutomaticRuleForReconversion() -> LearnedWordStore.RuleID? {
+        defer { lastAutomaticRule = nil }
+        return lastAutomaticRule
+    }
+
     /// Немедленно отменяет инжект и стирает сохранённые в памяти строки.
     func clearState() {
         injectionGeneration &+= 1
@@ -492,6 +558,7 @@ final class TextConverter {
         lastOriginal = ""
         lastConverted = ""
         lastTarget = nil
+        lastAutomaticRule = nil
     }
 
     private func scheduleSensitiveStateClear() {
@@ -500,6 +567,7 @@ final class TextConverter {
             self?.lastOriginal = ""
             self?.lastConverted = ""
             self?.lastTarget = nil
+            self?.lastAutomaticRule = nil
             self?.sensitiveStateClearWork = nil
         }
         sensitiveStateClearWork = work

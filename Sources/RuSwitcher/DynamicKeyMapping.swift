@@ -108,7 +108,12 @@ enum DynamicKeyMapping {
     /// Конвертирует набранные keycodes в строки исходной и целевой раскладок —
     /// для движка перепечатки (не читаем поле, не трогаем буфер обмена).
     /// nil — если раскладки не определились.
-    static func convertKeys(_ keys: [TypedKey]) -> (original: String, converted: String)? {
+    static func convertKeys(_ keys: [TypedKey]) -> (
+        original: String,
+        converted: String,
+        sourceLayoutID: String,
+        targetLayoutID: String
+    )? {
         guard !keys.isEmpty else { return nil }
         let settings = SettingsManager.shared
         let layouts = LayoutSwitcher.installedLayouts()
@@ -133,7 +138,7 @@ enum DynamicKeyMapping {
             original.append(sc)
             converted.append(tc)
         }
-        return (original, converted)
+        return (original, converted, currentID, targetID)
     }
 
     // Авто-детект раскладок живёт в LayoutSwitcher (autoDetectID1/ID2).

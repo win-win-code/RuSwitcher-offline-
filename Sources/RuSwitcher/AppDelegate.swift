@@ -19,9 +19,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
         setupSettingsCallbacks()
+        applyAdaptiveAutoSwitchState(SettingsManager.shared.adaptiveAutoSwitchEnabled)
         setupInputContextReset()
         syncLoginItem()
         if SettingsManager.shared.autoSwitchEnabled { runPermissionWizard() }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        LearnedWordStore.shared.flush()
     }
 
     private func setupSettingsCallbacks() {
@@ -45,6 +50,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settingsController.onCaretFlagChanged = { [weak self] _ in
             self?.rebuildMenu()          // синхронизировать галочку в меню
             self?.syncCaretIndicator()   // создать/снести индикатор + обновить гейт onUserInput
+        }
+        settingsController.onAdaptiveAutoSwitchChanged = { [weak self] enabled in
+            self?.applyAdaptiveAutoSwitchState(enabled)
+        }
+    }
+
+    private func applyAdaptiveAutoSwitchState(_ enabled: Bool) {
+        keyboardMonitor.adaptiveAutoSwitchEnabled = enabled
+        if enabled {
+            LearnedWordStore.shared.prepareIfNeeded()
+        } else {
+            textConverter.clearState()
         }
     }
 
@@ -253,8 +270,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.textConverter.clearState()
                     return
                 }
-                let conversionCompleted: (Bool) -> Void = { [weak self] succeeded in
+                let conversionCompleted: (Bool, TextConverter.ManualWordConversion?) -> Void = { [weak self] succeeded, manualConversion in
                     guard succeeded, let self else { return }
+                    if SettingsManager.shared.adaptiveAutoSwitchEnabled, let manualConversion {
+                        LearnedWordStore.shared.recordManualCorrection(
+                            sourceLayoutID: manualConversion.sourceLayoutID,
+                            targetLayoutID: manualConversion.targetLayoutID,
+                            originalWord: manualConversion.originalWord,
+                            convertedWord: manualConversion.convertedWord
+                        )
+                    }
                     self.keyboardMonitor.markConverted()
                     LayoutSwitcher.switchToOpposite()
                     self.updateStatusIcon()
@@ -286,7 +311,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     allowClipboardFallback: self.keyboardMonitor.mayHaveSelectedText,
                     completion: { succeeded in
                         if succeeded {
-                            conversionCompleted(true)
+                            conversionCompleted(true, nil)
                         } else {
                             convertBufferedText()
                         }
@@ -308,6 +333,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
                 let scheduled = self.textConverter.reconvert { [weak self] succeeded in
                     guard succeeded, let self else { return }
+                    if let rule = self.textConverter.consumeLastAutomaticRuleForReconversion() {
+                        LearnedWordStore.shared.block(rule)
+                    }
                     self.keyboardMonitor.markConverted()
                     LayoutSwitcher.switchToOpposite()
                     self.updateStatusIcon()
@@ -315,6 +343,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if !scheduled {
                     self.keyboardMonitor.clearSensitiveState()
                     self.textConverter.clearState()
+                }
+            },
+            onWordBoundary: { [weak self] keys, target, generation in
+                guard let self,
+                      SettingsManager.shared.adaptiveAutoSwitchEnabled,
+                      self.keyboardMonitor.isCurrentWordBoundary(generation),
+                      !AutoSwitchPolicy.isProtectedApp(
+                        NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+                      ) else { return }
+
+                let scheduled = self.textConverter.convertLearnedWord(
+                    wordKeys: keys,
+                    trailingSpaces: 1,
+                    expectedTarget: target
+                ) { [weak self] succeeded, targetLayoutID in
+                    guard let self else { return }
+                    if succeeded, let targetLayoutID {
+                        self.keyboardMonitor.markConverted()
+                        LayoutSwitcher.switchTo(layoutID: targetLayoutID)
+                        self.updateStatusIcon()
+                    } else if self.keyboardMonitor.isCurrentWordBoundary(generation) {
+                        self.keyboardMonitor.clearSensitiveState()
+                        self.textConverter.clearState()
+                    }
+                }
+                if !scheduled {
+                    // Не трогаем буфер: после обычного слова ручной триггер остаётся доступен.
+                    return
                 }
             }
         ) {

@@ -4,7 +4,9 @@ import Carbon
 
 /// Политика безопасности мониторинга ввода и ручной конвертации.
 enum AutoSwitchPolicy {
-    struct FocusedInput {
+    /// Identity передаётся только из event tap в главную очередь и используется там
+    /// повторно лишь для проверки того же AX-поля перед инжектом.
+    struct FocusedInput: @unchecked Sendable {
         let processIdentifier: pid_t
         let bundleIdentifier: String?
         /// nil, если приложение не публикует AX-фокус (часто веб-поля Chromium/Electron).

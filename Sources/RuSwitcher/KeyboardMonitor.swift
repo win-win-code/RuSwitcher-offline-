@@ -6,7 +6,7 @@ import Foundation
 let kRuSwitcherEventMarker: Int64 = 0x52555300
 
 /// Одно локальное нажатие в краткоживущем буфере конверсии.
-struct TypedKey {
+struct TypedKey: Sendable {
     let keyCode: UInt16
     let shift: Bool
     let caps: Bool
@@ -80,6 +80,10 @@ final class KeyboardMonitor: @unchecked Sendable {
 
     private var onAltTap: (() -> Void)?
     private var onAltReconvert: (() -> Void)?
+    private var onWordBoundary: (([TypedKey], AutoSwitchPolicy.FocusedInput, UInt) -> Void)?
+    /// Кэш настройки: при выключенной функции на границе слова ничего не диспатчим.
+    var adaptiveAutoSwitchEnabled = false
+    private var inputGeneration: UInt = 0
     /// issue #10: любой ввод/клик пользователя — чтобы спрятать флаг у каретки во время печати.
     var onUserInput: (() -> Void)?
     /// issue #10: включена ли фича флага-у-каретки. Гейтит диспатч onUserInput на горячем пути,
@@ -99,10 +103,12 @@ final class KeyboardMonitor: @unchecked Sendable {
 
     func start(
         onAltTap: @escaping () -> Void,
-        onAltReconvert: @escaping () -> Void
+        onAltReconvert: @escaping () -> Void,
+        onWordBoundary: @escaping ([TypedKey], AutoSwitchPolicy.FocusedInput, UInt) -> Void
     ) -> Bool {
         self.onAltTap = onAltTap
         self.onAltReconvert = onAltReconvert
+        self.onWordBoundary = onWordBoundary
 
         let precheck = CGPreflightListenEventAccess()
         rslog("Preflight check = \(precheck)")
@@ -163,10 +169,10 @@ final class KeyboardMonitor: @unchecked Sendable {
     /// особенно при переключении на/с Caps Lock, т.к. меняется режим tap (consume).
     @discardableResult
     func reconfigure() -> Bool {
-        guard let t = onAltTap, let r = onAltReconvert else { return false }
+        guard let t = onAltTap, let r = onAltReconvert, let b = onWordBoundary else { return false }
         rslog("Reconfiguring trigger…")
         stop()
-        return start(onAltTap: t, onAltReconvert: r)
+        return start(onAltTap: t, onAltReconvert: r, onWordBoundary: b)
     }
 
     func markConverted() {
@@ -280,6 +286,7 @@ final class KeyboardMonitor: @unchecked Sendable {
             clearSensitiveState()
             return
         }
+        inputGeneration &+= 1
         if let bufferedTarget = currentWordTarget ?? prevWordTarget,
            !AutoSwitchPolicy.sameIdentity(bufferedTarget, focusedInput) {
             fullReset()
@@ -310,9 +317,17 @@ final class KeyboardMonitor: @unchecked Sendable {
         // Пробел — единственная граница через которую можно вернуться
         if keyCode == KC.space {
             if currentWordLength > 0 {
+                let completedKeys = currentWordKeys
+                let completedTarget = currentWordTarget ?? focusedInput
+                let generation = inputGeneration
                 boundaryCount = 1
                 prevWordKeys = currentWordKeys
-                prevWordTarget = currentWordTarget ?? focusedInput
+                prevWordTarget = completedTarget
+                if adaptiveAutoSwitchEnabled, let onWordBoundary {
+                    DispatchQueue.main.async {
+                        onWordBoundary(completedKeys, completedTarget, generation)
+                    }
+                }
             } else {
                 boundaryCount += 1
             }
@@ -366,6 +381,15 @@ final class KeyboardMonitor: @unchecked Sendable {
             // Esc, F-клавиши, и т.д. — полный сброс
             fullReset()
         }
+    }
+
+    /// Слово ещё находится непосредственно перед единственным пробелом и с момента
+    /// границы не было нового реального нажатия.
+    func isCurrentWordBoundary(_ generation: UInt) -> Bool {
+        inputGeneration == generation
+            && currentWordKeys.isEmpty
+            && !prevWordKeys.isEmpty
+            && boundaryCount == 1
     }
 
     /// issue #7: на первой букве после смены раскладки даём короткий звук, зависящий от
